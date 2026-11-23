@@ -124,5 +124,74 @@ int main() {
       }
     }
   }
-  std::cout << "Stream stats retained-buffer rendering passed.\n";
+  stream->set_custom_titlebar(true);
+  auto displays = std::make_shared<slint::VectorModel<slint::SharedString>>(
+      std::vector<slint::SharedString>{"Display 1 (OMEN 34c)", "Display 2 (SQ17TH)"});
+  stream->set_displays(displays);
+  int switched_to = -1;
+  stream->on_switch_display([&](int display) { switched_to = display; });
+  const auto click = [&](slint::LogicalPosition position) {
+    stream->window().dispatch_pointer_move_event(position);
+    stream->window().dispatch_pointer_press_event(position, slint::PointerEventButton::Left);
+    stream->window().dispatch_pointer_release_event(position, slint::PointerEventButton::Left);
+    tick();
+  };
+  const slint::LogicalPosition second_display({300, 16});
+  const slint::LogicalPosition status({490, 16});
+  const slint::LogicalPosition outside({900, 350});
+  click(second_display);
+  if (switched_to != 1 || stream->get_selected_display() != 1) {
+    std::cerr << "Clicking a title-bar display must switch monitors\n";
+    return 1;
+  }
+  stream->window().dispatch_pointer_move_event(status);
+  tick();
+  if (!stream->get_title_stats_visible() || !stream->invoke_is_local_control_area(460, 40)) {
+    std::cerr << "Hovering over connection status must show the title-bar panel\n";
+    return 1;
+  }
+  stream->window().dispatch_pointer_move_event(outside);
+  tick();
+  if (stream->get_title_stats_visible()) {
+    std::cerr << "The unpinned title-bar panel must close on pointer exit\n";
+    return 1;
+  }
+  click(status);
+  stream->window().dispatch_pointer_move_event(outside);
+  tick();
+  if (!stream->get_title_stats_visible() || !stream->get_local_input_active()) {
+    std::cerr << "Clicking connection status must pin the title-bar panel\n";
+    return 1;
+  }
+  click(slint::LogicalPosition({465, 72}));
+  if (!stream->get_title_stats_visible()) {
+    std::cerr << "Clicking inside the panel must keep it pinned\n";
+    return 1;
+  }
+  click(outside);
+  if (stream->get_title_stats_visible() || stream->get_local_input_active()) {
+    std::cerr << "Clicking outside must dismiss the title-bar panel\n";
+    return 1;
+  }
+  click(status);
+  click(status);
+  if (stream->get_title_stats_visible() || stream->get_local_input_active()) {
+    std::cerr << "Clicking connection status again must hide the panel without reopening on hover\n";
+    return 1;
+  }
+  stream->window().dispatch_pointer_move_event(outside);
+  stream->window().dispatch_pointer_move_event(status);
+  tick();
+  if (!stream->get_title_stats_visible()) {
+    std::cerr << "Moving back to connection status must show the preview again\n";
+    return 1;
+  }
+  click(status);
+  stream->set_fullscreen_enabled(true);
+  tick();
+  if (stream->get_title_stats_visible() || stream->get_local_input_active()) {
+    std::cerr << "Going fullscreen must dismiss the windowed title-bar panel\n";
+    return 1;
+  }
+  std::cout << "Stream stats rendering and title-bar controls passed.\n";
 }

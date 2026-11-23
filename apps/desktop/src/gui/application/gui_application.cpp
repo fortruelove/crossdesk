@@ -835,7 +835,7 @@ bool PlaceStreamControlPointer(const slint::Window& window, float x, float y) {
 #endif
 }
 
-constexpr int kWaylandTitlebarLogicalHeight = 32;
+constexpr int kStreamTitlebarLogicalHeight = 32;
 
 SDL_DisplayID DisplayForSlintWindow(const slint::Window& window) {
   const auto position = window.position();
@@ -1028,6 +1028,8 @@ struct GuiApplication::StreamView {
   WindowDragState drag;
   std::string endpoint;
   unsigned endpoint_window_number = 1;
+  std::optional<uint64_t> connected_at;
+  uint64_t displayed_connection_seconds = 0;
   ConfigCenter::StreamWindowSize normal_size{1280, 720};
   int position_attempts = 2;
 #if defined(__APPLE__)
@@ -3962,7 +3964,9 @@ void GuiApplication::InitializeStreamWindow(StreamView& view) {
   } else {
     view.endpoint = FormatPeerId(view.session->remote_id_.c_str());
   }
-#if defined(__linux__) && !defined(__OHOS__)
+#if _WIN32
+  stream->set_custom_titlebar(true);
+#elif defined(__linux__) && !defined(__OHOS__)
   stream->window().set_xdg_app_id("crossdesk-remote-control");
   stream->set_custom_titlebar(use_xwayland_gui_);
 #endif
@@ -3977,7 +3981,7 @@ void GuiApplication::InitializeStreamWindow(StreamView& view) {
     NotifyVideoFrameReady(*view.session);
   });
   view.session->SetVideoRenderer(view.renderer);
-  if (stream->get_custom_titlebar()) view.normal_size.height += kWaylandTitlebarLogicalHeight;
+  if (stream->get_custom_titlebar()) view.normal_size.height += kStreamTitlebarLogicalHeight;
   if (auto saved = config_center_->GetStreamWindowSize(view.session->device_preference_key_))
     view.normal_size = *saved;
   stream->window().set_size(slint::LogicalSize({
@@ -4020,6 +4024,25 @@ void GuiApplication::SyncStreamWindow(StreamView& view) {
   }
   view.was_visible = visible;
   const MiniRtcConnectionStatus status = props->connection_status_.load();
+  if (stream->get_custom_titlebar()) {
+    uint64_t elapsed_seconds = 0;
+    if (status == MiniRtcConnectionStatus::MiniRtcConnectionConnected) {
+      const uint64_t now = SDL_GetTicks();
+      if (!view.connected_at) view.connected_at = now;
+      elapsed_seconds = (now - *view.connected_at) / 1000;
+    } else {
+      view.connected_at.reset();
+    }
+    if (elapsed_seconds != view.displayed_connection_seconds) {
+      view.displayed_connection_seconds = elapsed_seconds;
+      char elapsed[24];
+      std::snprintf(elapsed, sizeof(elapsed), "%02llu:%02llu:%02llu",
+                    static_cast<unsigned long long>(elapsed_seconds / 3600),
+                    static_cast<unsigned long long>(elapsed_seconds / 60 % 60),
+                    static_cast<unsigned long long>(elapsed_seconds % 60));
+      stream->set_connection_elapsed(UiText(elapsed));
+    }
+  }
   bool remote_update_available = false;
   HostPlatform remote_platform = HostPlatform::Unknown;
   if (status == MiniRtcConnectionStatus::MiniRtcConnectionConnected) {
@@ -4208,8 +4231,10 @@ void GuiApplication::SyncStreamWindow(StreamView& view) {
   stream->set_stats_remote_endpoint(UiText(direct ? net.remote_endpoint : ""));
 
   const auto fps_now = std::chrono::steady_clock::now();
+  const bool stats_requested = props->net_traffic_stats_button_pressed_ ||
+                               stream->get_title_stats_visible();
   bool refresh_stats = false;
-  if (!props->net_traffic_stats_button_pressed_) {
+  if (!stats_requested) {
     props->fps_ = 0;
     props->frame_count_ = 0;
     props->last_time_ = {};
@@ -4228,8 +4253,7 @@ void GuiApplication::SyncStreamWindow(StreamView& view) {
     }
   }
   stream->set_stats_fps(UiText(std::to_string(props->fps_)));
-  if (!props->net_traffic_stats_button_pressed_ ||
-      status != MiniRtcConnectionStatus::MiniRtcConnectionConnected) {
+  if (!stats_requested || status != MiniRtcConnectionStatus::MiniRtcConnectionConnected) {
     props->video_latency_snapshot_.reset();
   } else if (refresh_stats) {
     props->video_latency_snapshot_ = props->video_latency_->Get(fps_now);
@@ -4241,7 +4265,7 @@ void GuiApplication::SyncStreamWindow(StreamView& view) {
                         " ms"
                   : "—"));
   const auto display_rtt = props->net_traffic_stats_.SmoothedRttMs(fps_now);
-  const bool rtt_available = props->net_traffic_stats_button_pressed_ &&
+  const bool rtt_available = stats_requested &&
                             status == MiniRtcConnectionStatus::MiniRtcConnectionConnected &&
                             display_rtt.has_value();
   std::string connection_latency = "—";

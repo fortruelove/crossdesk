@@ -112,6 +112,8 @@ DeskHub connections are muted by default. Enable sound with **Select â†’ More â†
 
 Each connection opens its own control window. The first connection uses the default window size. Reconnecting restores the last windowed size for that device. You can view multiple devices at once. Focus a window to direct keyboard and mouse input to that device. Closing a control window disconnects that device and leaves the other connections running. If DeskHub is using the device, its preview stays connected. Expand the control bar if it is collapsed, and hover over icons to see their tooltips.
 
+On Windows and on Linux with the XWayland interface, the window title bar shows a tab for each remote monitor when there are multiple displays. Click a tab to switch monitors. Hover over the connection timer beside the tabs to preview network statistics. Click the timer to pin the panel, then click it again or click outside the panel to dismiss it. In fullscreen, both controls are available from the floating toolbar.
+
 | Control | Action |
 | --- | --- |
 | Display | Switch the remote monitor |

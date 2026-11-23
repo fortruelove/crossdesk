@@ -464,6 +464,13 @@ export component StreamWindow inherits Window {
         triggered => { root.fullscreen-transitioning = false; }
     }
     in property <bool> stats-visible: false;
+    in property <string> connection-elapsed: "00:00:00";
+    private property <bool> title-stats-hovered;
+    private property <bool> title-stats-pinned;
+    private property <bool> title-stats-suppressed;
+    out property <bool> title-stats-visible: root.titlebar-height > 0px
+        && root.window-active && !root.modal-visible
+        && (root.title-stats-pinned || (root.title-stats-hovered && !root.title-stats-suppressed));
     in property <[NetworkStatsRow]> stats-rows;
     in property <string> stats-fps: "0";
     in property <string> stats-resolution: "";
@@ -542,7 +549,12 @@ export component StreamWindow inherits Window {
         root.stats-header-height + root.stats-rows.length * root.stats-row-height + 114px;
     private property <length> stats-panel-height:
         min(root.stats-content-height + 16px, max(0px, video.height - root.control-toolbar-height - root.control-panel-gap));
-    private property <length> stats-panel-y: root.control-panel-y(root.stats-panel-height);
+    private property <length> stats-panel-width: root.title-stats-visible ? 360px : control.width;
+    private property <length> stats-panel-x: root.title-stats-visible
+        ? min(root.title-status-x, video.width - root.stats-panel-width - 4px) : control.x;
+    private property <length> stats-panel-y: root.title-stats-visible ? 0px : root.control-panel-y(root.stats-panel-height);
+    private property <bool> stats-panel-visible:
+        root.title-stats-visible || (root.stats-visible && root.control-content-visible);
     private property <length> file-panel-x: 18px;
     private property <length> file-panel-y: video.height - min(210px, video.height * 0.35);
     private property <length> file-panel-width: min(430px, video.width * 0.6);
@@ -574,7 +586,8 @@ export component StreamWindow inherits Window {
         video.width - root.disconnect-menu-width - 4px);
     private property <length> disconnect-menu-y: root.control-panel-y(root.disconnect-menu-height);
     private property <bool> control-menu-open:
-        root.display-menu-open || root.shortcut-menu-open || root.video-menu-open || root.disconnect-menu-open;
+        root.display-menu-open || root.shortcut-menu-open || root.video-menu-open
+        || root.disconnect-menu-open || root.title-stats-pinned;
     out property <bool> local-input-active: root.modal-visible || root.control-menu-open;
     changed control-menu-open => {
         root.keyboard-focus-changed(!root.control-menu-open && !root.modal-visible && input-focus.has-focus);
@@ -717,6 +730,17 @@ export component StreamWindow inherits Window {
     private property <length> control-press-y: 0px;
     private property <length> titlebar-height:
         root.custom-titlebar && !root.fullscreen-enabled ? 32px : 0px;
+    changed titlebar-height => {
+        if root.titlebar-height == 0px {
+            root.title-stats-pinned = false;
+            root.title-stats-hovered = false;
+            root.title-stats-suppressed = false;
+        }
+    }
+    private property <int> title-display-count: root.displays.length > 1 ? root.displays.length : 0;
+    private property <length> title-tab-width:
+        min(220px, max(0px, root.width - 320px) / max(1, root.title-display-count));
+    private property <length> title-status-x: 8px + root.title-display-count * root.title-tab-width;
     private property <length> window-corner-radius: 12px;
     callback begin-control-drag(length, length);
     callback move-control-drag(length, length);
@@ -735,6 +759,8 @@ export component StreamWindow inherits Window {
     }
 
     function close-control-menus() {
+        if root.title-stats-hovered { root.title-stats-suppressed = true; }
+        root.title-stats-pinned = false;
         display-menu-open-timer.running = false;
         root.display-menu-animation-enabled = false;
         root.display-menu-progress = 0.0;
@@ -929,8 +955,8 @@ export component StreamWindow inherits Window {
             && pointer-x <= root.control-surface-x + root.control-surface-width
             && pointer-y >= control.y
             && pointer-y <= control.y + control.height;
-        let over-stats = root.stats-visible && root.control-content-visible
-            && pointer-x >= control.x && pointer-x <= control.x + control.width
+        let over-stats = root.stats-panel-visible
+            && pointer-x >= root.stats-panel-x && pointer-x <= root.stats-panel-x + root.stats-panel-width
             && pointer-y >= root.stats-panel-y && pointer-y <= root.stats-panel-y + root.stats-panel-height;
         let display-menu-x = control.x + display-button.x;
         let over-display-menu = root.display-menu-open
@@ -1003,8 +1029,8 @@ export component StreamWindow inherits Window {
             z: 100;
 
             Text {
-                x: 120px;
-                width: parent.width - 240px;
+                x: root.title-status-x + 100px;
+                width: parent.width - self.x - 124px;
                 height: parent.height;
                 text: root.session-title;
                 color: root.window-active ? #3d3d3d : #747474;
@@ -1018,6 +1044,7 @@ export component StreamWindow inherits Window {
                 width: parent.width - 120px;
                 property <int> phase: self.pressed ? 1 : 0;
                 changed phase => {
+                    if phase == 1 { root.close-control-menus(); }
                     root.stream-title-drag(phase, self.mouse-x, self.mouse-y);
                 }
                 moved => {
@@ -1027,6 +1054,98 @@ export component StreamWindow inherits Window {
                 }
                 double-clicked => {
                     root.toggle-maximize-stream-window();
+                }
+            }
+            if root.title-display-count > 0: Rectangle {
+                x: 4px;
+                width: root.title-display-count * root.title-tab-width;
+                height: parent.height;
+
+                for display[index] in root.displays: Rectangle {
+                    x: index * root.title-tab-width;
+                    y: 4px;
+                    width: root.title-tab-width - 4px;
+                    height: parent.height - 4px;
+                    border-radius: 6px;
+                    background: index == root.selected-display ? ControlStyle.selected
+                        : tab-touch.has-hover ? #e6e6e6 : transparent;
+                    accessible-role: button;
+                    accessible-label: display;
+                    accessible-action-default => { tab-touch.clicked(); }
+
+                    HorizontalLayout {
+                        padding-left: 8px;
+                        padding-right: 8px;
+                        spacing: 6px;
+                        Text {
+                            text: FontAwesomeIcons.display;
+                            font-family: "Font Awesome 6 Free";
+                            font-weight: 900;
+                            font-size: 11px;
+                            color: index == root.selected-display ? ControlStyle.selected-text : #515762;
+                            vertical-alignment: center;
+                        }
+                        Text {
+                            text: display;
+                            font-size: 12px;
+                            color: index == root.selected-display ? ControlStyle.selected-text : #30343b;
+                            vertical-alignment: center;
+                            overflow: elide;
+                            horizontal-stretch: 1;
+                        }
+                    }
+                    tab-touch := TouchArea {
+                        clicked => {
+                            root.close-control-menus();
+                            if index != root.selected-display {
+                                root.selected-display = index;
+                                root.switch-display(index);
+                            }
+                        }
+                    }
+                }
+            }
+            Rectangle {
+                x: root.title-status-x;
+                y: 4px;
+                width: 92px;
+                height: 24px;
+                border-radius: 6px;
+                background: root.title-stats-pinned ? ControlStyle.selected
+                    : title-status-touch.has-hover ? #e6e6e6 : transparent;
+                accessible-role: button;
+                accessible-label: root.title-stats-pinned ? StreamStrings.hide-stats : StreamStrings.show-stats;
+                accessible-action-default => { title-status-touch.clicked(); }
+
+                HorizontalLayout {
+                    alignment: center;
+                    spacing: 6px;
+                    Text {
+                        text: FontAwesomeIcons.signal;
+                        font-family: "Font Awesome 6 Free";
+                        font-weight: 900;
+                        font-size: 12px;
+                        color: #26835f;
+                        vertical-alignment: center;
+                    }
+                    Text {
+                        text: root.connection-elapsed;
+                        font-size: 12px;
+                        color: #515762;
+                        vertical-alignment: center;
+                    }
+                }
+                title-status-touch := TouchArea {
+                    enabled: !root.modal-visible;
+                    changed has-hover => {
+                        root.title-stats-hovered = self.has-hover;
+                        if !self.has-hover { root.title-stats-suppressed = false; }
+                    }
+                    clicked => {
+                        let was-pinned = root.title-stats-pinned;
+                        root.close-control-menus();
+                        root.title-stats-pinned = !was-pinned;
+                    }
                 }
             }
             stream-minimize-button := Rectangle {
@@ -1052,7 +1171,7 @@ export component StreamWindow inherits Window {
                         || stream-minimize-touch.pressed ? #454545 : #898989;
                 }
                 stream-minimize-touch := TouchArea {
-                    clicked => { root.minimize-stream-window(); }
+                    clicked => { root.close-control-menus(); root.minimize-stream-window(); }
                 }
             }
             stream-maximize-button := Rectangle {
@@ -1102,7 +1221,7 @@ export component StreamWindow inherits Window {
                         || stream-maximize-touch.pressed ? #454545 : #898989;
                 }
                 stream-maximize-touch := TouchArea {
-                    clicked => { root.toggle-maximize-stream-window(); }
+                    clicked => { root.close-control-menus(); root.toggle-maximize-stream-window(); }
                 }
             }
             stream-close-button := Rectangle {
@@ -1130,7 +1249,7 @@ export component StreamWindow inherits Window {
                     stroke-width: 1px;
                 }
                 stream-close-touch := TouchArea {
-                    clicked => { root.close-stream-window(); }
+                    clicked => { root.close-control-menus(); root.close-stream-window(); }
                 }
             }
             SurfaceSeparator {
@@ -1459,15 +1578,15 @@ export component StreamWindow inherits Window {
                 }
             }
 
-            if root.stats-visible && root.control-content-visible: stats-panel := StreamControlSurface {
-                x: control.x; y: root.stats-panel-y;
-                width: control.width; height: root.stats-panel-height;
-                opacity: root.control-content-progress;
+            if root.stats-panel-visible: stats-panel := StreamControlSurface {
+                x: root.stats-panel-x; y: root.stats-panel-y;
+                width: root.stats-panel-width; height: root.stats-panel-height;
+                opacity: root.title-stats-visible ? 1 : root.control-content-progress;
                 z: 10;
                 clip: true;
                 TouchArea {
                     mouse-cursor: default;
-                    clicked => { root.close-control-menus(); }
+                    clicked => { if !root.title-stats-visible { root.close-control-menus(); } }
                     scroll-event(event) => { accept }
                 }
                 stats-table := Rectangle {
