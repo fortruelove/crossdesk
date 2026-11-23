@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "rd_log.h"
+#include "platform/windows/gui/boss_key.h"
 #include "windows_input_injector.h"
 #include "windows_input_marker.h"
 #include "windows_key_metadata.h"
@@ -300,6 +301,7 @@ bool PlatformKeyboardCapturer::HandleKeyboardInput(
       keyboard.dwExtraInfo == kInjectedKeyboardInputMarker) {
     return false;
   }
+  if (WindowsBossKey::Instance().HandleKey(message, keyboard, foreground_window)) return true;
   // Do not reject LLKHF_INJECTED wholesale: an upstream remote session or
   // accessibility tool can be the controller's keyboard source.
 

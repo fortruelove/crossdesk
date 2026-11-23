@@ -296,6 +296,16 @@ function setup_targets()
                 "apps/desktop/src/platform/linux/gui/cuda_graphics.cpp")
     end
 
+    target("boss_key_gesture_test")
+        set_kind("binary")
+        set_languages("c++20")
+        set_default(false)
+        add_includedirs("apps/desktop/src")
+        add_files("apps/desktop/tests/boss_key_gesture_test.cpp")
+        if is_os("windows") then
+            add_syslinks("user32")
+        end
+
     target("slint_stream_render_test")
         set_kind("binary")
         set_languages("c++20")
@@ -460,7 +470,8 @@ function setup_targets()
                 "apps/desktop/src/platform/windows/input/keyboard/*.cpp",
                 "apps/desktop/src/platform/windows/input/windows_input_injector.cpp",
                 "apps/desktop/src/platform/windows/input/device_controller_factory.cpp")
-            add_includedirs("apps/desktop/src/platform/windows",
+            add_includedirs("apps/desktop/src",
+                "apps/desktop/src/platform/windows",
                 "apps/desktop/src/platform/windows/service",
                 "apps/desktop/src/platform/windows/input/mouse",
                 "apps/desktop/src/platform/windows/input/keyboard",

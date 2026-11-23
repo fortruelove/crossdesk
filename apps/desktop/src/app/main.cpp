@@ -267,7 +267,12 @@ static int ExitForExistingInstance(
 static int RunApplication(int argc, char* argv[]) {
   // The instance guards are held before any configuration or logger is opened.
   auto path_manager = std::make_unique<crossdesk::PathManager>("CrossDesk");
+#if CROSSDESK_PORTABLE
+  crossdesk::InitLogger(path_manager->GetLogPath().string(), crossdesk::LOGGER_NAME,
+                        !IsDaemonChild(argc, argv));
+#else
   crossdesk::InitLogger(path_manager->GetLogPath().string());
+#endif
 
 #ifdef _WIN32
 #if CROSSDESK_PORTABLE

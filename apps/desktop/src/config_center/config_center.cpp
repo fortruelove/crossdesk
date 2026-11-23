@@ -215,6 +215,8 @@ int ConfigCenter::Load() {
       ini_->GetBoolValue(section_, "save_remote_previews", true));
   pause_video_when_minimized_.store(
       ini_->GetBoolValue(section_, "pause_video_when_minimized", true));
+  boss_key_ = {static_cast<int>(ini_->GetLongValue(section_, "boss_key_first", 0)),
+               static_cast<int>(ini_->GetLongValue(section_, "boss_key_second", 0))};
   auto read_sensitivity = [&](const char* key) {
     const long percent = ini_->GetLongValue(section_, key, 100);
     return IsValidInputSensitivity(percent) ? static_cast<int>(percent) : 100;
@@ -673,6 +675,19 @@ int ConfigCenter::SetPauseVideoWhenMinimized(bool enabled) {
 
 bool ConfigCenter::IsPauseVideoWhenMinimized() const {
   return pause_video_when_minimized_.load();
+}
+
+std::pair<int, int> ConfigCenter::GetBossKey() const { return boss_key_; }
+
+int ConfigCenter::SetBossKey(int first, int second) {
+  const auto keys = std::pair{first, second};
+  if (boss_key_ == keys) return 0;
+  if (StoreValues({{"boss_key_first", std::to_string(first)},
+                   {"boss_key_second", std::to_string(second)}}) != 0) {
+    return -1;
+  }
+  boss_key_ = keys;
+  return 0;
 }
 
 int ConfigCenter::GetWheelSensitivityPercent(const std::string& device) const {

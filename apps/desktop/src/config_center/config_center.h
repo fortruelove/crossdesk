@@ -99,6 +99,8 @@ class ConfigCenter {
   bool IsTrustedDevicesOnly() const;
   bool IsSaveRemotePreviews() const;
   bool IsPauseVideoWhenMinimized() const;
+  std::pair<int, int> GetBossKey() const;
+  int SetBossKey(int first, int second);
   int GetMouseSensitivityPercent() const { return mouse_sensitivity_percent_.load(); }
   int GetWheelSensitivityPercent(const std::string& device) const;
   std::optional<StreamWindowSize> GetStreamWindowSize(const std::string& device) const;
@@ -150,6 +152,7 @@ class ConfigCenter {
   std::atomic<bool> trusted_devices_only_{false};
   std::atomic<bool> save_remote_previews_{true};
   std::atomic<bool> pause_video_when_minimized_{true};
+  std::pair<int, int> boss_key_{};
   std::atomic<int> mouse_sensitivity_percent_{100};
   int legacy_wheel_sensitivity_percent_ = 100;
   std::map<std::string, int> device_wheel_sensitivity_;

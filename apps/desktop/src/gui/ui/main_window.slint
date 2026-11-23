@@ -78,6 +78,11 @@ export global UiStrings {
     in-out property <string> codec: "Video codec";
     in-out property <string> pause-video-when-minimized: "Pause video when minimized";
     in-out property <string> pause-video-when-minimized-hint: "Pause video reception when the control window is minimized to reduce local decoding resource usage.";
+    in-out property <string> boss-key: "Boss key";
+    in-out property <string> boss-key-waiting: "Press a key";
+    in-out property <string> boss-key-clear: "Clear";
+    in-out property <string> boss-key-first: "First key";
+    in-out property <string> boss-key-second: "Second key";
     in-out property <string> force-relay: "Force relay";
     in-out property <string> self-hosted: "Self-hosted server";
     in-out property <string> autostart: "Start with system";
@@ -774,6 +779,14 @@ export component MainWindow inherits Window {
     in-out property <bool> daemon-enabled: false;
     in-out property <bool> save-remote-previews: true;
     in-out property <bool> pause-video-when-minimized: true;
+    in property <bool> boss-key-available;
+    in-out property <int> boss-key-slot;
+    in-out property <int> boss-key-first;
+    in-out property <int> boss-key-second;
+    in-out property <string> boss-key-first-label;
+    in-out property <string> boss-key-second-label;
+    callback capture-boss-key(int);
+    callback clear-boss-key();
     // Show the preference on every platform; only adapted hosts can change it.
     in property <bool> privacy-setting-available: false;
     in-out property <bool> privacy-on-connect-enabled: true;
@@ -851,7 +864,10 @@ export component MainWindow inherits Window {
     private property <bool> pause-video-hint-visible: false;
     private property <length> pause-video-hint-x: 0px;
     private property <length> pause-video-hint-y: 0px;
-    changed settings-tab => { root.pause-video-hint-visible = false; }
+    changed settings-tab => {
+        root.pause-video-hint-visible = false;
+        if root.boss-key-slot != 0 { root.capture-boss-key(0); }
+    }
     changed settings-scroll-y => { root.pause-video-hint-visible = false; }
     in-out property <bool> self-host-settings-open: false;
     changed self-host-settings-open => {
@@ -977,6 +993,7 @@ export component MainWindow inherits Window {
             if root.autostart-system-managed { root.refresh-autostart-status(); }
             root.dialog-focus-pending = true;
         } else {
+            if root.boss-key-slot != 0 { root.capture-boss-key(0); }
             root.autostart-guide-open = false;
         }
     }
@@ -2997,10 +3014,42 @@ export component MainWindow inherits Window {
                         padding-right: settings-dialog.scrollbar-gutter; padding-bottom: 4px;
                         spacing: 14px;
                         SettingsGroup {
-                            title: GalleryStrings.texts[114]; rows: 1;
+                            title: GalleryStrings.texts[114]; rows: root.boss-key-available ? 2 : 1;
                             SettingsRow {
-                                label: UiStrings.language; divider: false;
+                                label: UiStrings.language; divider: root.boss-key-available;
                                 SettingsSelect { x: parent.width - 192px; y: 4px; width: 180px; model: root.language-options; current-index <=> root.language-index; }
+                            }
+                            if root.boss-key-available: SettingsRow {
+                                label: UiStrings.boss-key; divider: false;
+                                HorizontalLayout {
+                                    x: parent.width - 244px;
+                                    y: 4px;
+                                    width: 232px;
+                                    height: 28px;
+                                    spacing: 4px;
+                                    SettingsButton {
+                                        width: 78px; height: 28px;
+                                        primary: root.boss-key-slot == 1;
+                                        text: self.primary ? UiStrings.boss-key-waiting
+                                            : root.boss-key-first-label == "" ? "___" : root.boss-key-first-label;
+                                        accessible-label: UiStrings.boss-key-first + " " + self.text;
+                                        clicked => { root.capture-boss-key(1); }
+                                    }
+                                    Text { text: "+"; vertical-alignment: center; }
+                                    SettingsButton {
+                                        width: 78px; height: 28px;
+                                        primary: root.boss-key-slot == 2;
+                                        text: self.primary ? UiStrings.boss-key-waiting
+                                            : root.boss-key-second-label == "" ? "___" : root.boss-key-second-label;
+                                        accessible-label: UiStrings.boss-key-second + " " + self.text;
+                                        clicked => { root.capture-boss-key(2); }
+                                    }
+                                    SettingsButton {
+                                        width: 58px; height: 28px;
+                                        text: UiStrings.boss-key-clear;
+                                        clicked => { root.clear-boss-key(); }
+                                    }
+                                }
                             }
                         }
                         SettingsGroup {

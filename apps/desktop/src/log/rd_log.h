@@ -21,7 +21,8 @@ namespace crossdesk {
 constexpr auto LOGGER_NAME = "crossdesk";
 
 void InitLogger(const std::string& log_dir,
-                const std::string& logger_name = LOGGER_NAME);
+                const std::string& logger_name = LOGGER_NAME,
+                bool write_latest_log = false);
 
 std::shared_ptr<spdlog::logger> get_logger();
 

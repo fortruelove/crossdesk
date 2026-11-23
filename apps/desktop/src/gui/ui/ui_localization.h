@@ -146,6 +146,11 @@ inline int ApplyMainWindowStrings(
       Text(localization::pause_video_when_minimized[language]));
   strings.set_pause_video_when_minimized_hint(
       Text(localization::pause_video_when_minimized_hint[language]));
+  strings.set_boss_key(Text(language == 0 ? "老板键" : "Boss key"));
+  strings.set_boss_key_waiting(Text(language == 0 ? "请按键" : "Press a key"));
+  strings.set_boss_key_clear(Text(language == 0 ? "清除" : "Clear"));
+  strings.set_boss_key_first(Text(language == 0 ? "第一个键" : "First key"));
+  strings.set_boss_key_second(Text(language == 0 ? "第二个键" : "Second key"));
   strings.set_force_relay(Text(localization::force_relay[language]));
   strings.set_self_hosted(
       Text(localization::self_hosted_server_config[language]));

@@ -119,6 +119,9 @@ private:
 #endif
   void UpdateLocalization();
   void ResetSettingsUi(bool gallery_window = false);
+#if defined(_WIN32)
+  void TickBossKey();
+#endif
   bool ValidateSelfHostedSettingsFromUi(bool gallery_window = false);
   bool SaveSettingsFromUi(bool gallery_window = false);
   void ApplySettingsFromConfig(bool reconnect);

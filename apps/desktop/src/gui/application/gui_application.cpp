@@ -64,6 +64,7 @@
 #if _WIN32
 #include <windows.h>
 
+#include "platform/windows/gui/boss_key.h"
 #include "platform/windows/gui/slint_backend.h"
 #include "platform/windows/gui/session_end_observer.h"
 #include "platform/windows/gui/tray/win_tray.h"
@@ -1581,6 +1582,11 @@ void GuiApplication::InitializeUi() {
   BindMainCallbacks();
   BindMainCallbacks(true);
   InitializeSystemTray();
+#if _WIN32
+  const auto [first_key, second_key] = config_center_->GetBossKey();
+  if (!WindowsBossKey::Instance().Configure(first_key, second_key))
+    LOG_WARN("Could not start the boss key listener");
+#endif
   UpdateLocalization();
   SyncMainWindow();
 }
@@ -1595,6 +1601,8 @@ void GuiApplication::ShowMainWindow(const std::string& activation_token) {
   ui_->main->show();
   ui_->main->window().set_minimized(false);
 #if _WIN32
+  auto& boss_key = WindowsBossKey::Instance();
+  if (boss_key.hidden()) boss_key.Restore();
   const HWND window = ui_->main->window().win32_hwnd();
   ConfigureWindowsWindowIcons(window);
   ShowWindow(window, IsIconic(window) ? SW_RESTORE : SW_SHOW);
@@ -1679,6 +1687,15 @@ void GuiApplication::ResetSettingsUi(bool gallery_window) {
     return;
   }
   auto& main = ui_->Window(gallery_window);
+#if _WIN32
+  const auto [first_key, second_key] = config_center_->GetBossKey();
+  main->set_boss_key_available(true);
+  main->set_boss_key_slot(0);
+  main->set_boss_key_first(first_key);
+  main->set_boss_key_second(second_key);
+  main->set_boss_key_first_label(UiText(WindowsBossKey::KeyName(first_key)));
+  main->set_boss_key_second_label(UiText(WindowsBossKey::KeyName(second_key)));
+#endif
   main->set_language_index(language_button_value_);
   main->set_codec_index(video_encode_format_button_value_);
   main->set_ip_direct_enabled_draft(config_center_->IsIpDirectEnabled());
@@ -2092,10 +2109,39 @@ void GuiApplication::BindMainCallbacks(bool gallery_window) {
     }
   });
   BindTrustedDeviceCallbacks(gallery_window);
+#if _WIN32
+  main->on_capture_boss_key([this, main, gallery_window](int slot) {
+    auto& boss_key = WindowsBossKey::Instance();
+    if (slot == 0) {
+      boss_key.CancelCapture();
+      main->set_boss_key_slot(0);
+      return;
+    }
+    ui_->Window(!gallery_window)->set_boss_key_slot(0);
+    if (boss_key.BeginCapture(main->window().win32_hwnd(), gallery_window, slot)) {
+      main->set_boss_key_slot(slot);
+    } else {
+      main->set_boss_key_slot(0);
+      main->set_settings_save_error(UiText(localization_language_index_ == 0
+          ? "无法录入老板键。" : "Could not capture the boss key."));
+    }
+  });
+  main->on_clear_boss_key([main] {
+    WindowsBossKey::Instance().CancelCapture();
+    main->set_boss_key_slot(0);
+    main->set_boss_key_first(0);
+    main->set_boss_key_second(0);
+    main->set_boss_key_first_label("");
+    main->set_boss_key_second_label("");
+  });
+#endif
   main->on_save_settings([this, main] {
     return SaveSettingsFromUi(main->get_gallery_mode());
   });
   main->on_cancel_settings([this, main] {
+#if _WIN32
+    if (main->get_boss_key_slot()) WindowsBossKey::Instance().CancelCapture();
+#endif
     ResetSettingsUi(main->get_gallery_mode());
   });
 #if defined(__OHOS__)
@@ -2619,6 +2665,7 @@ void GuiApplication::Tick() {
   }
   PollDiagnosticExport();
 #ifdef _WIN32
+  TickBossKey();
   TickLocalHost();
 #endif
   TickLan();
@@ -2872,6 +2919,38 @@ void GuiApplication::Tick() {
   if (ui_->tray) ui_->tray->SyncDockVisibility();
 #endif
 }
+
+#if _WIN32
+void GuiApplication::TickBossKey() {
+  auto& boss_key = WindowsBossKey::Instance();
+  if (const auto captured = boss_key.TakeCapture()) {
+    auto& window = ui_->Window(captured->gallery);
+    if (window->get_settings_open() && window->get_boss_key_slot() == captured->slot) {
+      window->set_boss_key_slot(0);
+      if (captured->key != VK_ESCAPE) {
+        const auto label = UiText(WindowsBossKey::KeyName(captured->key));
+        if (captured->slot == 1) {
+          window->set_boss_key_first(captured->key);
+          window->set_boss_key_first_label(label);
+        } else {
+          window->set_boss_key_second(captured->key);
+          window->set_boss_key_second_label(label);
+        }
+      }
+    }
+  }
+  if (boss_key.TakeToggle()) {
+    if (boss_key.hidden()) {
+      boss_key.Restore();
+    } else {
+      ReleaseControl();
+      boss_key.Hide();
+    }
+  } else if (boss_key.hidden()) {
+    boss_key.Hide();
+  }
+}
+#endif
 
 void GuiApplication::PollUpdateCheck() {
 #if CROSSDESK_HAS_UPDATER
@@ -4963,6 +5042,16 @@ bool GuiApplication::SaveSettingsFromUi(bool gallery_window) {
   const auto previous_connection_mode = config_center_->GetConnectionMode();
   auto& main = ui_->Window(gallery_window);
   main->set_settings_save_error("");
+#if _WIN32
+  const int first_key = main->get_boss_key_first();
+  const int second_key = main->get_boss_key_second();
+  if ((!first_key) != (!second_key)) {
+    main->set_settings_tab(0);
+    main->set_settings_save_error(UiText(localization_language_index_ == 0
+        ? "请录入两个按键，或清除老板键。" : "Enter both keys or clear the boss key."));
+    return false;
+  }
+#endif
   if (main->get_trusted_devices_only() && !trusted_devices_) {
     main->set_settings_save_error(UiText(localization::Literal(
         "无法读取设备身份或可信列表，请修复后再启用。", localization_language_index_)));
@@ -5150,6 +5239,18 @@ bool GuiApplication::SaveSettingsFromUi(bool gallery_window) {
         "保存失败，请重试", localization_language_index_)));
     return false;
   }
+#if _WIN32
+  auto& boss_key = WindowsBossKey::Instance();
+  const auto previous_keys = config_center_->GetBossKey();
+  if (!boss_key.Configure(first_key, second_key) ||
+      config_center_->SetBossKey(first_key, second_key) != 0) {
+    boss_key.Configure(previous_keys.first, previous_keys.second);
+    main->set_settings_save_error(UiText(localization_language_index_ == 0
+        ? "无法保存老板键。" : "Could not save the boss key."));
+    return false;
+  }
+  boss_key.CancelCapture();
+#endif
   ApplySettingsFromConfig(previous_server !=
                           GetSignalServerSettings(*config_center_));
   ResetSettingsUi(gallery_window);

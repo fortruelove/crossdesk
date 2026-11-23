@@ -14,6 +14,7 @@
 #include <mutex>
 #include <vector>
 
+#include "spdlog/sinks/basic_file_sink.h"
 #include "spdlog/sinks/rotating_file_sink.h"
 #include "spdlog/sinks/stdout_color_sinks.h"
 #if defined(__OHOS__)
@@ -41,6 +42,7 @@ class HarmonyLogSink final : public spdlog::sinks::base_sink<std::mutex> {
 
 std::string g_log_dir = "logs";
 std::string g_logger_name = LOGGER_NAME;
+bool g_write_latest_log = false;
 std::once_flag g_logger_once_flag;
 std::mutex g_logger_mutex;
 std::shared_ptr<spdlog::logger> g_logger;
@@ -62,7 +64,8 @@ const BuildIdentity& GetBuildIdentity() {
   return identity;
 }
 
-void InitLogger(const std::string& log_dir, const std::string& logger_name) {
+void InitLogger(const std::string& log_dir, const std::string& logger_name,
+                bool write_latest_log) {
   const auto directory = NormalizeLogDirectory(log_dir);
   std::lock_guard<std::mutex> lock(g_logger_mutex);
   if (g_logger) {
@@ -78,6 +81,7 @@ void InitLogger(const std::string& log_dir, const std::string& logger_name) {
 
   g_log_dir = directory;
   g_logger_name = logger_name;
+  g_write_latest_log = write_latest_log;
 }
 
 std::shared_ptr<spdlog::logger> get_logger() {
@@ -100,6 +104,10 @@ std::shared_ptr<spdlog::logger> get_logger() {
     sinks.push_back(std::make_shared<spdlog::sinks::stdout_color_sink_mt>());
 #endif
     sinks.push_back(file_sink);
+    if (g_write_latest_log) {
+      sinks.push_back(std::make_shared<spdlog::sinks::basic_file_sink_mt>(
+          g_log_dir + "/latest.log", true));
+    }
 
     auto logger = std::make_shared<spdlog::logger>(g_logger_name, sinks.begin(),
                                                    sinks.end());

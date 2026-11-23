@@ -114,6 +114,8 @@ Each connection opens its own control window. The first connection uses the defa
 
 On Windows and on Linux with the XWayland interface, the window title bar shows a tab for each remote monitor when there are multiple displays. Click a tab to switch monitors. Hover over the connection timer beside the tabs to preview network statistics. Click the timer to pin the panel, then click it again or click outside the panel to dismiss it. In fullscreen, both controls are available from the floating toolbar.
 
+On the Windows controller, open **Settings → General → Boss key**. Click each field and press a key. Press `Esc` to cancel the current capture. Select **Clear** and save to disable the shortcut. Press two different keys together or tap the same key twice quickly if both fields use that key. Use the shortcut once while CrossDesk has focus to hide its local windows while keeping your connections open. Use it again or open CrossDesk from the system tray to restore your windows.
+
 | Control | Action |
 | --- | --- |
 | Display | Switch the remote monitor |
