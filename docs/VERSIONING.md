@@ -63,6 +63,8 @@ python3 scripts/version.py set mcp 0.3.0 --dry-run
 
 版本参数填写 `X.Y.Z`，不包含标签前缀 `v`、日期或构建元数据。CLI、MCP、Pi 另支持 `X.Y.Z-rc.N` 等预发布版本。客户端共用版本各段限制在 `0–65535`，以适配 Windows 版本资源。
 
+本 fork 可在桌面默认版本中加入第四段修订号。桌面版 `1.7.6.1` 与移动端共享基础版本 `1.7.6`，`show desktop` 返回完整版本，`check client` 检查共享基础版本。下一次用 `set client` 更新基础版本时，桌面修订号随之清除。
+
 `set client` 可分别传入 `--android-build`、`--ios-build`、`--harmony-build`，不接受含义不明确的 `--build`。`set android 1.7.7 --build 5` 同样会将全部客户端发布版本设为 `1.7.7`，但 `--build 5` 只指定 Android 构建号，其余移动端按各自的构建号递增。`set ios`、`set harmony` 对称处理；`set desktop` 同样同步全部客户端，但不接受 `--build`。
 
 各端发布版本变化而未显式指定构建号时，该端构建号自动加一；相同版本且未指定构建号时不改动文件。例如从所有客户端 `1.7.6`、Android / iOS / HarmonyOS 构建号分别为 `4` / `6` / `10001` 执行 `set client 1.7.7`，结果为所有客户端 `1.7.7`、构建号 `5` / `7` / `10002`。修复版本差异时，仅版本实际变化的端自动增加构建号。显式构建号不得降低，修改应用版本时构建号必须增加。脚本统一使用正整数构建号：Android 最大 `2100000000`，iOS 最大 `9999`，HarmonyOS 最大 `2147483647`。

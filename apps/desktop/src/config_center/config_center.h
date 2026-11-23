@@ -135,11 +135,7 @@ class ConfigCenter {
   static constexpr bool kDefaultDisableReceiverPaddingProbing = true;
   bool disable_receiver_padding_probing_ = kDefaultDisableReceiverPaddingProbing;
   std::string signal_server_host_ = "";
-#if defined(_WIN32) || (defined(__linux__) && !defined(__OHOS__))
-  std::string signal_server_host_default_ = "124.220.68.117";
-#else
   std::string signal_server_host_default_ = "api.crossdesk.cn";
-#endif
   int signal_server_port_ = 0;
   int server_port_default_ = 9099;
   bool enable_self_hosted_ = false;

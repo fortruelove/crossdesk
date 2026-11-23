@@ -13,6 +13,8 @@
 namespace crossdesk {
 
 std::optional<VersionInfo> ParseVersionInfo(const nlohmann::json& json);
+std::optional<VersionInfo> ParseForkRelease(std::string_view response);
+inline constexpr auto kForkReleasesUrl = "https://github.com/fortruelove/crossdesk/releases";
 std::optional<VersionInfo> CheckUpdate();
 
 }  // namespace crossdesk

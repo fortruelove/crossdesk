@@ -102,7 +102,7 @@ void GuiApplication::CheckPortableWindowsService() {
       executable_path.empty() ? std::wstring{}
                               : (executable_path.parent_path() /
                                  L"crossdesk_service.exe").wstring(),
-      &error);
+      &error, nullptr, /*allow_other_installation=*/true);
   portable_service_installed_ = registration == ServiceRegistrationState::current;
   portable_service_needs_repair_ =
       registration == ServiceRegistrationState::repair_required ||

@@ -2168,7 +2168,7 @@ void GuiApplication::BindMainCallbacks(bool gallery_window) {
   main->on_open_manual_download([this] {
     const auto& latest = update_checker_->latest();
     OpenUrl(latest && !latest->download_url.empty() ? latest->download_url
-                                                   : "https://crossdesk.cn");
+                                                   : kForkReleasesUrl);
   });
   main->on_open_download([this, main] {
 #if CROSSDESK_HAS_UPDATER

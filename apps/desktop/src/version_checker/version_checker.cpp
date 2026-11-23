@@ -10,12 +10,7 @@
 #include <nlohmann/json.hpp>
 
 #include "rd_log.h"
-#include "linux_update_download.h"
-#ifndef __OHOS__
-#include "updater/update_core.h"
-#include "updater/update_platform.h"
-#endif
-
+#include <algorithm>
 #include <cstdlib>
 #include <filesystem>
 #include <string>
@@ -26,10 +21,10 @@ namespace crossdesk {
 namespace {
 
 void LogHttpError(const httplib::Result& result) {
-  LOG_WARN("Failed to fetch version.json: error={}, message={}",
+  LOG_WARN("Failed to check GitHub releases: error={}, message={}",
            static_cast<int>(result.error()), httplib::to_string(result.error()));
 #ifdef CPPHTTPLIB_OPENSSL_SUPPORT
-  LOG_WARN("version.json SSL error={}, OpenSSL error={}", result.ssl_error(),
+  LOG_WARN("GitHub release TLS error={}, OpenSSL error={}", result.ssl_error(),
            result.ssl_openssl_error());
 #endif
 }
@@ -93,12 +88,12 @@ void ConfigureLinuxCaCerts(httplib::Client* cli) {
   }();
 
   if (ca_file.empty() && ca_dir.empty()) {
-    LOG_WARN("No Linux CA bundle found for version.json request; relying on OpenSSL defaults");
+    LOG_WARN("No Linux CA bundle found for GitHub request; relying on OpenSSL defaults");
     return;
   }
 
   cli->set_ca_cert_path(ca_file, ca_dir);
-  LOG_DEBUG("Configured version.json TLS CA bundle: file={}, dir={}",
+  LOG_DEBUG("Configured GitHub TLS CA bundle: file={}, dir={}",
             ca_file.empty() ? "<none>" : ca_file,
             ca_dir.empty() ? "<none>" : ca_dir);
 }
@@ -106,77 +101,54 @@ void ConfigureLinuxCaCerts(httplib::Client* cli) {
 
 }  // namespace
 
+std::optional<VersionInfo> ParseForkRelease(std::string_view response) {
+  try {
+    const auto release = nlohmann::json::parse(response);
+    if (!release.is_object() || release.value("draft", false) ||
+        release.value("prerelease", false)) return std::nullopt;
+    const auto tag = release.value("tag_name", std::string{});
+    if (tag.empty() || tag.front() != 'v') return std::nullopt;
+    const auto numeric = std::string_view(tag).substr(1);
+    const auto dots = std::count(numeric.begin(), numeric.end(), '.');
+    if (dots < 2 || dots > 3 || numeric.find_first_not_of("0123456789.") != std::string_view::npos)
+      return std::nullopt;
+    auto info = ParseVersionInfo({{"version", tag},
+                                  {"releaseName", release.value("name", std::string{})},
+                                  {"releaseNotes", release.value("body", std::string{})}});
+    if (info) info->download_url = std::string(kForkReleasesUrl) + "/tag/" + tag;
+    return info;
+  } catch (const nlohmann::json::exception&) {
+    return std::nullopt;
+  }
+}
+
 std::optional<VersionInfo> CheckUpdate() {
-  httplib::Client cli("https://version.crossdesk.cn");
+  httplib::Client cli("https://api.github.com");
 
   cli.set_connection_timeout(5);
   cli.set_read_timeout(5);
   cli.set_write_timeout(5);
   cli.set_max_timeout(15000);
-  cli.set_follow_location(true);
+  cli.set_default_headers({{"User-Agent", "CrossDesk"},
+                           {"Accept", "application/vnd.github+json"}});
 
 #if defined(CPPHTTPLIB_OPENSSL_SUPPORT) && defined(__linux__)
   ConfigureLinuxCaCerts(&cli);
 #endif
 
-  auto res = cli.Get("/version.json");
-  if (res) {
-    if (res->status == 200) {
-      try {
-        const auto manifest = nlohmann::json::parse(res->body);
-        auto info = ParseVersionInfo(manifest);
-        if (info) {
-#if defined(__OHOS__)
-          // A Linux package cannot be installed by Harmony's package manager.
-          // Until the manifest has a Harmony artifact, use the release website.
-          info->download_url = "https://crossdesk.cn";
-#elif defined(__linux__)
-          std::string architecture;
-#if defined(__x86_64__)
-          architecture = "amd64";
-#elif defined(__aarch64__)
-          architecture = "arm64";
-#endif
-          std::error_code error;
-          const auto executable = std::filesystem::read_symlink("/proc/self/exe", error);
-          info->download_url = LinuxUpdateDownloadUrl(
-              manifest, *info, architecture,
-              error ? std::filesystem::path{} : executable.parent_path());
-#endif
-#ifndef __OHOS__
-          const auto platform = updater::PlatformKey(updater::ExecutablePath(),
-#if CROSSDESK_PORTABLE
-                                                     true
-#else
-                                                     false
-#endif
-          );
-#if !defined(__linux__)
-          info->download_url = updater::DownloadUrl(manifest.dump(), platform, info->version);
-#endif
-#if !CROSSDESK_PORTABLE
-          if (updater::DownloadUrl(manifest.dump(), platform, info->version) != "https://crossdesk.cn")
-            info->update_envelope = updater::SignedDownload(manifest.dump(), platform);
-#endif
-#endif
-          LOG_INFO("Fetched version.json: latest_version={}, releaseDate={}, patch={}",
-                   info->version, info->release_date, info->patch);
-        } else {
-          LOG_WARN("version.json does not contain a valid version");
-        }
-        return info;
-      } catch (const std::exception& e) {
-        LOG_WARN("Failed to parse version.json: {}", e.what());
-        return std::nullopt;
-      }
-    } else {
-      LOG_WARN("Failed to fetch version.json: HTTP status={}", res->status);
-      return std::nullopt;
-    }
-  } else {
+  auto res = cli.Get("/repos/fortruelove/crossdesk/releases/latest");
+  if (!res) {
     LogHttpError(res);
     return std::nullopt;
   }
+  if (res->status != 200) {
+    LOG_WARN("Failed to check GitHub releases: HTTP status={}", res->status);
+    return std::nullopt;
+  }
+  auto info = ParseForkRelease(res->body);
+  if (info) LOG_INFO("Latest fork release: {}", info->version);
+  else LOG_WARN("The latest GitHub release does not have a valid desktop version");
+  return info;
 }
 
 }  // namespace crossdesk

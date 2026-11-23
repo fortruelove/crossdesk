@@ -150,10 +150,11 @@ class Snapshot:
     def state(self, component, check=True):
         if component in CLIENT_GROUPS:
             clients = {platform: self.state(platform, check=check) for platform in CLIENTS}
-            if len({data["version"] for data in clients.values()}) != 1:
+            base = ".".join(clients["desktop"]["version"].split(".")[:3])
+            if any(clients[platform]["version"] != base for platform in MOBILE):
                 versions = ", ".join(f"{platform}={data['version']}" for platform, data in clients.items())
                 raise ValueError(f"Client versions differ: {versions}; use set client X.Y.Z to synchronize them")
-            return {"version": clients["desktop"]["version"],
+            return {"version": base,
                     **{f"{platform}_build": clients[platform]["build"] for platform in MOBILE}}
         result = {}
         for key, group in fields(self, component).items():
@@ -164,7 +165,13 @@ class Snapshot:
             if key == "build":
                 validate_build(component, value)
             else:
-                validate_version(value, component in ("cli", "mcp", "pi"))
+                if component == "desktop" and value.count(".") == 3:
+                    base, revision = value.rsplit(".", 1)
+                    validate_version(base)
+                    if not re.fullmatch(r"0|[1-9][0-9]*", revision):
+                        raise ValueError(f"Invalid desktop revision: {revision!r}")
+                else:
+                    validate_version(value, component in ("cli", "mcp", "pi"))
                 if component == "desktop" and any(int(part) > 65535 for part in value.split(".")):
                     raise ValueError("Desktop version components must fit Windows version resources (0–65535)")
             result[key] = value
@@ -328,7 +335,7 @@ def main(argv=None, root=ROOT):
             snapshot.state("client")
         if args.component in TOOLS:
             check_tools(snapshot)
-        current = snapshot.state(args.component)
+        current = snapshot.state("client" if args.component == "desktop" else args.component)
         version = current["version"]
         if args.part == "build":
             if args.component not in MOBILE or any(value is not None for value in (build, args.android_build, args.ios_build, args.harmony_build)):

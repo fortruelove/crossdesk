@@ -196,7 +196,7 @@ enum class ServiceRegistrationState {
 // the service is not installed.
 ServiceRegistrationState QueryCrossDeskServiceRegistration(
     const std::wstring& binary_path, DWORD* error_code = nullptr,
-    DWORD* start_type = nullptr);
+    DWORD* start_type = nullptr, bool allow_other_installation = false);
 bool InstallCrossDeskService(const std::wstring& binary_path);
 // Switch between boot and on-demand start; a missing service counts as
 // disabled.

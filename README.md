@@ -111,8 +111,6 @@ cd crossdesk
 
 ### Connect by device ID
 
-Windows, Linux and iOS builds from this fork default to `124.220.68.117:9099`. If signaling fails, the client retries the selected server. You can still select a different server explicitly in Settings.
-
 1. **Prepare the host.** Install and run CrossDesk on the computer to control, select ID mode, and wait for the server-connected status, then find its ID and password under **Local Desktop**.
 2. **Connect.** On another computer, enter the host's 9-digit ID and click **Connect**. Native mobile clients and the [Web Client](https://web.crossdesk.cn/) can also connect.
 3. **Verify the password.** Enter the host's current connection password and wait for the desktop to appear. On desktop, select **Remember password** to reconnect later from **Recent Connections**.

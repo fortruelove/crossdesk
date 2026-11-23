@@ -2644,7 +2644,8 @@ std::string CrossDeskServiceHost::SendSecureDesktopTextInput(
 }
 
 ServiceRegistrationState QueryCrossDeskServiceRegistration(
-    const std::wstring& binary_path, DWORD* error_code, DWORD* start_type) {
+    const std::wstring& binary_path, DWORD* error_code, DWORD* start_type,
+    bool allow_other_installation) {
   if (error_code) *error_code = ERROR_SUCCESS;
   if (start_type) *start_type = SERVICE_DEMAND_START;
   const auto failed = [error_code](DWORD error) {
@@ -2700,15 +2701,19 @@ ServiceRegistrationState QueryCrossDeskServiceRegistration(
   const std::filesystem::path expected(binary_path);
   const auto registered_path = registered.lexically_normal().make_preferred().wstring();
   const auto expected_path = expected.lexically_normal().make_preferred().wstring();
-  if (!valid_command ||
-      CompareStringOrdinal(registered_path.c_str(), -1, expected_path.c_str(),
-                           -1, TRUE) != CSTR_EQUAL) {
+  const bool same_path = CompareStringOrdinal(registered_path.c_str(), -1,
+                                              expected_path.c_str(), -1, TRUE) == CSTR_EQUAL;
+  const bool valid_other_path = allow_other_installation && registered.is_absolute() &&
+      CompareStringOrdinal(registered.filename().c_str(), -1,
+                           expected.filename().c_str(), -1, TRUE) == CSTR_EQUAL;
+  if (!valid_command || (!same_path && !valid_other_path)) {
     return ServiceRegistrationState::repair_required;
   }
   std::error_code error;
-  if (!std::filesystem::is_regular_file(expected, error) ||
+  const auto& installed = same_path ? expected : registered;
+  if (!std::filesystem::is_regular_file(installed, error) ||
       !std::filesystem::is_regular_file(
-          expected.parent_path() / L"crossdesk_session_helper.exe", error)) {
+          installed.parent_path() / L"crossdesk_session_helper.exe", error)) {
     return ServiceRegistrationState::repair_required;
   }
   return ServiceRegistrationState::current;

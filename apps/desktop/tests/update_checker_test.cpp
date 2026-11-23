@@ -158,5 +158,16 @@ int main() {
   bool ok = TestAsyncAndSchedule();
   ok &= TestRetryAndCachedResult();
   ok &= TestStopDuringFetch();
+  const auto release = crossdesk::ParseForkRelease(
+      R"({"tag_name":"v1.7.6.1","name":"CrossDesk 1.7.6.1","body":"Fixes","html_url":"https://example.com"})");
+  ok &= Expect("fork release has the exact version and a trusted download page",
+      release && release->version == "1.7.6.1" &&
+      release->download_url == "https://github.com/fortruelove/crossdesk/releases/tag/v1.7.6.1" &&
+      release->update_envelope.empty() &&
+      crossdesk::IsNewerVersion("1.7.6", release->version));
+  ok &= Expect("reject unrelated and prerelease tags",
+      !crossdesk::ParseForkRelease(R"({"tag_name":"ios-v1.7.7"})") &&
+      !crossdesk::ParseForkRelease(R"({"tag_name":"v1.7.7-rc.1"})") &&
+      !crossdesk::ParseForkRelease(R"({"tag_name":"v1.7.7","prerelease":true})"));
   return ok ? 0 : 1;
 }

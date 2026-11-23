@@ -2,6 +2,8 @@
 
 [返回首页](../README_ZH.md) · [设置与更新](USER_GUIDE.md#settings) · [构建与发布](#升级器构建与发布)
 
+本 fork 的桌面客户端从 [fortruelove/crossdesk 的 GitHub Releases](https://github.com/fortruelove/crossdesk/releases) 检查更新。发现新版后，点击下载会打开对应 Release 页面。发布标签使用 `vX.Y.Z` 或 `vX.Y.Z.N`。下文的签名应用内安装流程适用于上游发布。
+
 桌面端可以在 **主菜单 → 关于 → 检查更新** 查看新版本。发现新版本后，先阅读更新说明，再按界面提供的“安装更新”或下载入口继续。
 
 ## 安装更新
