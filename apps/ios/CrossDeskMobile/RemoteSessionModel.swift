@@ -300,7 +300,7 @@ struct SignalServerConfiguration: Equatable {
     let host: String
     let signalPort: Int
 
-    static let official = Self(host: "api.crossdesk.cn", signalPort: 9099)
+    static let defaultServer = Self(host: "124.220.68.117", signalPort: 9099)
     private static let customServerKey = "crossdesk.mobile.custom-signal-server"
 
     static func loadCustom() -> Self? {
@@ -570,7 +570,7 @@ final class RemoteSessionModel: NSObject, ObservableObject, CrossDeskRTCBridgeDe
             signalStatus = NSLocalizedString("等待隐私授权", comment: ""); signalHasError = false
             return false
         }
-        let configuration = customServer ?? .official
+        let configuration = customServer ?? .defaultServer
         if bridgeConfiguration != configuration {
             bridgeConfiguration = configuration
             signalConnected = false
