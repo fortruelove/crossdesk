@@ -2,9 +2,9 @@
 
 [返回首页](../README_ZH.md) · [设置与更新](USER_GUIDE.md#settings) · [构建与发布](#升级器构建与发布)
 
-本 fork 的桌面客户端从 [fortruelove/crossdesk 的 GitHub Releases](https://github.com/fortruelove/crossdesk/releases) 检查更新。发现新版后，点击下载会打开对应 Release 页面。发布标签使用 `vX.Y.Z` 或 `vX.Y.Z.N`。下文的签名应用内安装流程适用于上游发布。
+本 fork 的桌面客户端从 [fortruelove/crossdesk 的 GitHub Releases](https://github.com/fortruelove/crossdesk/releases) 检查更新。Windows 安装版内置更新公钥后，可在发现带有效签名的新版时点击 **安装更新**。发布标签使用 `vX.Y.Z` 或 `vX.Y.Z.N`。
 
-本 fork 的 Windows 发布从带版本标签的源码构建。标签须与 `python3 scripts/version.py show desktop --field version` 相符。自动发布会同时上传正式安装程序 `crossdesk-win-x64-<版本>.exe` 和便携 ZIP，两个包都构建成功后才发布。已安装到 Program Files 的用户应运行 Release 中的安装程序更新。
+本 fork 的 Windows 发布从带版本标签的源码构建。标签须与 `python3 scripts/version.py show desktop --field version` 相符。发布任务会为最终的 `crossdesk-win-x64-<版本>.exe` 生成签名，并将签名信息随发布说明和安装程序、便携 ZIP 一起发布。从 1.7.7.1 或更早的版本升级时，请先手动安装一个内置更新公钥的版本。便携 ZIP 继续通过发布页更新。
 
 桌面端可以在 **主菜单 → 关于 → 检查更新** 查看新版本。发现新版本后，先阅读更新说明，再按界面提供的“安装更新”或下载入口继续。
 
@@ -100,6 +100,13 @@ python3 -c "from pathlib import Path; p=Path('crossdesk-update-public.der').read
 
 桌面构建工作流将公钥传给 Xmake。只有发布清单生成步骤读取私钥。
 首次需要手动安装包含升级器、公钥及新安装元数据的版本。
+
+本 fork 的 Windows 标签发布要求这两个值匹配。GitHub Release 的说明末尾包含
+`.github/scripts/sign_fork_windows_update.py <版本> <安装包>` 生成的
+`crossdesk-windows-update` HTML 注释。编辑发布说明时请保留这个注释。
+手动发布时也要在最终安装包生成后签名，并把脚本输出追加到发布说明末尾。
+更新器只接受该版本在 `fortruelove/crossdesk` 下的 Windows 安装包地址，
+并在安装前校验 Ed25519 签名、包大小和 SHA-256。
 
 GitHub Actions 从分支手动打包时，在 `Build and Release` 的
 `Run workflow` 中填写 `desktop_version`（例如 `1.7.2`），`patch` 保持

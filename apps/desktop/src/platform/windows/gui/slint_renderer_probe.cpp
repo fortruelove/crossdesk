@@ -1,5 +1,6 @@
 #include <SDL3/SDL.h>
 #include <windows.h>
+#include <GL/gl.h>
 
 #include <chrono>
 #include <iostream>
@@ -9,7 +10,7 @@
 
 namespace crossdesk {
 
-int RunSlintRendererProbe() {
+int RunSlintRendererProbe(bool require_software) {
   SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
   // Renderer probing should not inhibit automatic display sleep either.
   SDL_SetHint(SDL_HINT_VIDEO_ALLOW_SCREENSAVER, "1");
@@ -27,9 +28,14 @@ int RunSlintRendererProbe() {
     // and first draw all succeeded. GPU readback from an off-screen window can
     // be black even when rendering works, so do not use its pixels as a test.
     const auto notifier_error = probe->window().set_rendering_notifier(
-        [&](slint::RenderingState state, slint::GraphicsAPI) {
-          if (state == slint::RenderingState::AfterRendering) {
+        [&](slint::RenderingState state, slint::GraphicsAPI graphics_api) {
+          if (!require_software && state == slint::RenderingState::AfterRendering) {
             result = 0;
+            if (graphics_api == slint::GraphicsAPI::NativeOpenGL) {
+              const auto* renderer = reinterpret_cast<const char*>(glGetString(GL_RENDERER));
+              if (renderer && PreferSoftwareForWindowsOpenGl(renderer))
+                result = kSlintRendererProbePreferSoftware;
+            }
           }
         });
     probe->window().set_position(

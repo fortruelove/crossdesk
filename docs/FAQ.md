@@ -35,6 +35,12 @@ tccutil reset Accessibility cn.crossdesk.app
 
 执行后重新启动 CrossDesk，按提示在系统设置中授权。仍有旧路径或旧版本条目时，可在对应权限列表中移除旧条目后重新添加当前应用。
 
+## Windows 控制窗口的标题栏或鼠标点击位置错位
+
+Windows 启动探测发现 CrossDesk 正在使用可识别的 Intel 核显运行 OpenGL 时，会自动使用软件渲染。规则覆盖 Intel HD、UHD、Iris 核显及可从名称识别的部分 Arc 核显，与驱动版本无关。若仍遇到问题，请从出现错位的操作机导出诊断日志，并记录窗口是普通、最大化还是全屏，以及 Windows 显示缩放比例。
+
+完全退出 CrossDesk 后，也可以用 `CrossDesk.exe --software-render` 手动切换软件渲染做对照测试。诊断日志应记录 `Slint backend: winit-software` 和首帧的窗口尺寸、显示缩放比例及画面位置。
+
 ## Linux Wayland 无法捕获画面
 
 Wayland 画面捕获依赖启用了 Wayland 支持的构建、宿主系统 PipeWire 0.3 和桌面门户授权；无法捕获时也可在 X11 会话中对比验证。构建选项见 [Linux 构建说明](BUILD.md#linux)。

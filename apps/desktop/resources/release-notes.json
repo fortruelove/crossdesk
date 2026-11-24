@@ -1,23 +1,17 @@
 {
   "zh-CN": [
-    "合并上游 1.7.7，支持桌面双向复制粘贴文件，并改进画面延迟和信令重连。",
-    "远控标题栏可切换显示器，并可查看或固定连接信息。",
-    "Windows 设置新增可自定义的老板键，按同一组合隐藏或恢复本机窗口。",
-    "恢复官方默认信令。桌面版通过本 fork 的 GitHub Releases 检查更新。",
-    "Windows 便携版可复用原安装目录中的锁屏控制服务。"
+    "修复部分 Intel 核显在 Windows 控制窗口中标题栏显示不全、鼠标点击位置错位的问题。启动时检测当前使用的 Intel 核显 OpenGL 渲染器，命中时切换到软件渲染。",
+    "Windows 安装版支持从本 fork 的 GitHub Releases 下载、校验并安装更新。1.7.7.1 用户需手动安装一次 1.7.7.2，此后可在应用内安装带签名的新版本。",
+    "Windows 便携版继续通过 GitHub Releases 下载 ZIP 更新。"
   ],
   "en-US": [
-    "Includes upstream 1.7.7 with two-way desktop file copy and paste, reduced video latency, and signaling recovery improvements.",
-    "Switch remote displays from the title bar and preview or pin connection details.",
-    "Configure a Windows boss key to hide and restore local CrossDesk windows.",
-    "Restore the upstream signaling default and check desktop updates through this fork’s GitHub Releases.",
-    "The Windows portable build can reuse a correctly registered unattended service from another installation."
+    "Fix misaligned clicks and clipped title bars in Windows remote-control windows on some Intel integrated graphics devices. CrossDesk selects software rendering when it detects a supported Intel integrated OpenGL renderer.",
+    "Windows installed builds can download, verify, and install signed updates from this fork’s GitHub Releases. Install 1.7.7.2 manually once when upgrading from 1.7.7.1.",
+    "Windows portable builds continue to update through the ZIP package on GitHub Releases."
   ],
   "zh-Hant": [
-    "合併上游 1.7.7，支援桌面雙向複製貼上檔案，並改善畫面延遲和信令重連。",
-    "遠端控制標題列可切換顯示器，並可查看或固定連線資訊。",
-    "Windows 設定新增可自訂的老闆鍵，可隱藏及還原本機視窗。",
-    "還原官方預設信令。桌面版以此 fork 的 GitHub Releases 檢查更新。",
-    "Windows 免安裝版可使用其他安裝目錄已正確登記的鎖定畫面控制服務。"
+    "修正部分 Intel 內顯在 Windows 控制視窗中標題列顯示不全、滑鼠點擊位置偏移的問題。啟動時偵測目前使用的 Intel 內顯 OpenGL 渲染器，符合時切換至軟體渲染。",
+    "Windows 安裝版支援從此 fork 的 GitHub Releases 下載、驗證及安裝更新。由 1.7.7.1 升級時請先手動安裝一次 1.7.7.2，之後即可在應用程式內安裝已簽署的新版。",
+    "Windows 免安裝版繼續從 GitHub Releases 下載 ZIP 更新。"
   ]
 }

@@ -169,5 +169,15 @@ int main() {
       !crossdesk::ParseForkRelease(R"({"tag_name":"ios-v1.7.7"})") &&
       !crossdesk::ParseForkRelease(R"({"tag_name":"v1.7.7-rc.1"})") &&
       !crossdesk::ParseForkRelease(R"({"tag_name":"v1.7.7","prerelease":true})"));
+  const auto signed_release = crossdesk::ParseForkRelease(
+      R"({"tag_name":"v1.7.7.2","body":"Fixes\r\n\r\n<!-- crossdesk-windows-update: {\"payload\":\"{\\\"version\\\":\\\"1.7.7.2\\\"}\",\"signature\":\"test\"} -->\r\n"})");
+  ok &= Expect("supply the signed installer envelope without displaying it as release notes",
+      signed_release && signed_release->release_notes == "Fixes" &&
+      !signed_release->update_envelope.empty());
+  const auto mismatched_release = crossdesk::ParseForkRelease(
+      R"({"tag_name":"v1.7.7.3","body":"Fixes\n\n<!-- crossdesk-windows-update: {\"payload\":\"{\\\"version\\\":\\\"1.7.7.2\\\"}\",\"signature\":\"test\"} -->"})");
+  ok &= Expect("keep manual download when the envelope version does not match the tag",
+      mismatched_release && mismatched_release->release_notes == "Fixes" &&
+      mismatched_release->update_envelope.empty());
   return ok ? 0 : 1;
 }

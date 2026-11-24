@@ -77,6 +77,9 @@ std::string ProbeSlintRenderer(DWORD timeout_ms) {
   if (!GetExitCodeProcess(process.hProcess, &exit_code)) {
     return "Unable to read renderer probe result: " + ErrorCode(GetLastError());
   }
+  if (exit_code == kSlintRendererProbePreferSoftware) {
+    return "Selected software rendering for Intel integrated OpenGL graphics";
+  }
   return exit_code == 0
              ? std::string{}
              : "Slint renderer probe exited with " + ErrorCode(exit_code);

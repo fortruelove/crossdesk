@@ -352,6 +352,13 @@ int main(int argc, char* argv[]) {
   }
 #endif
 #ifdef _WIN32
+  // A command-line choice survives launching through Windows Explorer,
+  // elevation and the runtime daemon without relying on the parent shell.
+  const bool software_renderer = argc >= 2 &&
+      std::strcmp(argv[1], crossdesk::kSlintSoftwareRendererArgument) == 0;
+  if (software_renderer && _putenv_s("SLINT_BACKEND", "winit-software") != 0) {
+    return 1;
+  }
   if (argc >= 2 &&
       std::strcmp(argv[1], crossdesk::platform::kWindowsDaemonArgument) == 0) {
     return crossdesk::platform::RunWindowsRuntimeDaemon();
@@ -426,9 +433,18 @@ int main(int argc, char* argv[]) {
             : crossdesk::platform::RemoveInstalledAutostart("CrossDesk");
     return success ? 0 : 1;
   }
-  if (argc == 2 &&
-      std::strcmp(argv[1], crossdesk::kSlintRendererProbeArgument) == 0) {
-    return crossdesk::RunSlintRendererProbe();
+  const int probe_index = software_renderer ? 2 : 1;
+  if (argc == probe_index + 1 &&
+      std::strcmp(argv[probe_index], crossdesk::kSlintRendererProbeArgument) == 0) {
+    if (!software_renderer) return crossdesk::RunSlintRendererProbe();
+    crossdesk::PathManager paths("CrossDesk");
+    crossdesk::InitLogger(paths.GetLogPath().string(), crossdesk::LOGGER_NAME, true);
+    const int result = crossdesk::RunSlintRendererProbe(true);
+    if (result == 0)
+      crossdesk::get_logger()->info("Slint software renderer probe rendered successfully");
+    else
+      crossdesk::get_logger()->error("Slint software renderer probe failed: {}", result);
+    return result;
   }
   if (argc > 1 && IsServiceCliCommand(argv[1])) {
     EnsureConsoleForCli();

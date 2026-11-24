@@ -2,6 +2,7 @@
 .xmake/
 .xmake-toolchain-cache/
 build/
+/logs/
 apps/ios/Vendor/
 apps/ios/DerivedData*/
 apps/ios/.xmake/

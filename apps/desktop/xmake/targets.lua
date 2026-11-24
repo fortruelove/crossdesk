@@ -312,6 +312,7 @@ function setup_targets()
         set_default(false)
         if is_os("windows") then
             add_cxxflags("/bigobj")
+            add_includedirs("apps/desktop/src")
         end
         add_packages("slint")
         add_deps("crossdesk_ui")
@@ -351,6 +352,12 @@ function setup_targets()
         set_default(false)
         add_deps("version_checker")
         add_files("apps/desktop/tests/update_checker_test.cpp")
+
+    target("fork_windows_update_test")
+        set_kind("binary")
+        set_default(false)
+        add_deps("version_checker")
+        add_files("apps/desktop/tests/fork_windows_update_test.cpp")
 
     target("privacy")
         set_kind("object")

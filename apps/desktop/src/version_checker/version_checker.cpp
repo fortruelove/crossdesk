@@ -20,6 +20,30 @@ namespace crossdesk {
 
 namespace {
 
+constexpr std::string_view kWindowsUpdateMarker = "<!-- crossdesk-windows-update: ";
+
+std::string TakeWindowsUpdateEnvelope(std::string& notes, std::string_view version) {
+  const auto start = notes.rfind(kWindowsUpdateMarker);
+  const auto end = notes.find_last_not_of(" \t\r\n");
+  if (start == std::string::npos || (start != 0 && notes[start - 1] != '\n') ||
+      end < start + kWindowsUpdateMarker.size() + 3 ||
+      notes.compare(end - 3, 4, " -->") != 0) return {};
+
+  const auto begin = start + kWindowsUpdateMarker.size();
+  auto envelope = notes.substr(begin, end - 3 - begin);
+  const auto last_note = start == 0 ? std::string::npos :
+      notes.find_last_not_of(" \t\r\n", start - 1);
+  notes.resize(last_note == std::string::npos ? 0 : last_note + 1);
+  if (envelope.size() > 65536 || envelope.find_first_of("\r\n") != std::string::npos)
+    return {};
+  try {
+    const auto wrapper = nlohmann::json::parse(envelope);
+    const auto payload = nlohmann::json::parse(wrapper.at("payload").get<std::string>());
+    if (payload.at("version").get_ref<const std::string&>() == version) return envelope;
+  } catch (const nlohmann::json::exception&) {}
+  return {};
+}
+
 void LogHttpError(const httplib::Result& result) {
   LOG_WARN("Failed to check GitHub releases: error={}, message={}",
            static_cast<int>(result.error()), httplib::to_string(result.error()));
@@ -115,7 +139,10 @@ std::optional<VersionInfo> ParseForkRelease(std::string_view response) {
     auto info = ParseVersionInfo({{"version", tag},
                                   {"releaseName", release.value("name", std::string{})},
                                   {"releaseNotes", release.value("body", std::string{})}});
-    if (info) info->download_url = std::string(kForkReleasesUrl) + "/tag/" + tag;
+    if (info) {
+      info->download_url = std::string(kForkReleasesUrl) + "/tag/" + tag;
+      info->update_envelope = TakeWindowsUpdateEnvelope(info->release_notes, info->version);
+    }
     return info;
   } catch (const nlohmann::json::exception&) {
     return std::nullopt;

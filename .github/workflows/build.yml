@@ -507,7 +507,13 @@ jobs:
           copy "${{ github.workspace }}\apps\desktop\scripts\windows\nsProcess.dll" $nsisPluginDir
 
       - name: Build CrossDesk
+        shell: pwsh
         run: |
+          if ($env:GITHUB_REPOSITORY -eq 'fortruelove/crossdesk' -and
+              $env:GITHUB_REF.StartsWith('refs/tags/v') -and
+              $env:CROSSDESK_UPDATE_PUBLIC_KEY -cnotmatch '^[0-9a-f]{64}$') {
+              throw 'Set CROSSDESK_UPDATE_PUBLIC_KEY before building a fork release.'
+          }
           xmake f --CROSSDESK_VERSION=${{ env.VERSION_NUM }} --USE_CUDA=$env:WINDOWS_USE_CUDA --CROSSDESK_PORTABLE=false -vy
           xmake b -vy crossdesk
 
@@ -652,6 +658,12 @@ jobs:
         with:
           name: crossdesk-win-x64-portable-${{ needs.prepare-version.outputs.version }}
           path: release
+      - name: Sign Windows update metadata
+        env:
+          CROSSDESK_UPDATE_PRIVATE_KEY: ${{ secrets.CROSSDESK_UPDATE_PRIVATE_KEY }}
+        run: |
+          python3 .github/scripts/sign_fork_windows_update.py "$VERSION_NUM" \
+            "release/crossdesk-win-x64-${VERSION_NUM}.exe" > "$RUNNER_TEMP/fork-windows-update.txt"
       - name: Publish installer and portable zip together
         run: |
           installer="release/crossdesk-win-x64-${VERSION_NUM}.exe"
@@ -662,6 +674,8 @@ jobs:
             echo 'Windows 正式安装包为 .exe，便携版为 .zip。'
             echo
             jq -r '."zh-CN"[] | "- " + .' apps/desktop/resources/release-notes.json
+            echo
+            cat "$RUNNER_TEMP/fork-windows-update.txt"
           } > "$RUNNER_TEMP/fork-release-notes.md"
           gh release create "$GITHUB_REF_NAME" "$installer" "$portable" \
             --repo "$GITHUB_REPOSITORY" --verify-tag --latest \

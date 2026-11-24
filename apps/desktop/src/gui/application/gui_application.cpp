@@ -1037,6 +1037,9 @@ struct GuiApplication::StreamView {
   int chrome_attempts = 30;
 #endif
   bool was_visible = false;
+#if defined(_WIN32)
+  bool logged_video_geometry = false;
+#endif
   slint::ComponentHandle<ui::StreamWindow> window = ui::StreamWindow::create();
 
   bool Visible() const {
@@ -4240,6 +4243,26 @@ void GuiApplication::SyncStreamWindow(StreamView& view) {
     stream->set_adaptation_policy_index(props->video_settings_.preference);
   }
   view.ObserveWindowState();
+#if defined(_WIN32)
+  if (!view.logged_video_geometry && stream->get_has_frame()) {
+    const auto& native = stream->window();
+    const HWND hwnd = native.win32_hwnd();
+    RECT outer{}, client{};
+    POINT origin{};
+    if (hwnd && GetWindowRect(hwnd, &outer) && GetClientRect(hwnd, &client) &&
+        ClientToScreen(hwnd, &origin)) {
+      const auto size = native.size();
+      LOG_INFO("Stream window geometry: client={}x{}, client inset=({}, {}), "
+               "Slint={}x{} scale={}, video={}x{} top={}, fullscreen={}, maximized={}",
+               client.right, client.bottom, origin.x - outer.left, origin.y - outer.top,
+               size.width, size.height, native.scale_factor(),
+               stream->get_video_area_width(), stream->get_video_area_height(),
+               stream->get_video_area_top(), stream->get_fullscreen_enabled(),
+               stream->get_window_maximized());
+      view.logged_video_geometry = true;
+    }
+  }
+#endif
   stream->set_stats_visible(props->net_traffic_stats_button_pressed_);
 
   std::vector<slint::SharedString> displays;

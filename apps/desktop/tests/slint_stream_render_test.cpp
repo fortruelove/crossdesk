@@ -10,6 +10,28 @@
 #include <thread>
 #include <vector>
 
+#if defined(_WIN32)
+#include "platform/windows/gui/slint_backend.h"
+
+static_assert(crossdesk::PreferSoftwareForWindowsOpenGl(
+    "Intel(R) UHD Graphics 630"));
+static_assert(crossdesk::PreferSoftwareForWindowsOpenGl("Intel UHD Graphics 770"));
+static_assert(crossdesk::PreferSoftwareForWindowsOpenGl("Intel(R) HD Graphics 4600"));
+static_assert(crossdesk::PreferSoftwareForWindowsOpenGl("Intel(R) Iris(R) Xe Graphics"));
+static_assert(crossdesk::PreferSoftwareForWindowsOpenGl("Intel(R) Graphics"));
+static_assert(crossdesk::PreferSoftwareForWindowsOpenGl("Intel(R) Arc(TM) 140V GPU"));
+static_assert(crossdesk::PreferSoftwareForWindowsOpenGl("Intel(R) Arc(TM) Graphics 130T"));
+static_assert(crossdesk::PreferSoftwareForWindowsOpenGl("Intel(R) Arc(TM) B390 GPU"));
+static_assert(!crossdesk::PreferSoftwareForWindowsOpenGl(
+    "Intel(R) Iris(R) Xe MAX Graphics"));
+static_assert(!crossdesk::PreferSoftwareForWindowsOpenGl("Intel(R) Arc(TM) A770 Graphics"));
+static_assert(!crossdesk::PreferSoftwareForWindowsOpenGl("Intel(R) Arc(TM) B580 Graphics"));
+static_assert(!crossdesk::PreferSoftwareForWindowsOpenGl("Intel(R) Arc(TM) Graphics"));
+static_assert(!crossdesk::PreferSoftwareForWindowsOpenGl(
+    "NVIDIA GeForce RTX 4090"));
+static_assert(!crossdesk::PreferSoftwareForWindowsOpenGl("AMD Radeon(TM) Graphics"));
+#endif
+
 namespace {
 // Match the retained software buffer used by the Harmony desktop adapter.
 // A full window snapshot would conceal missing damage/redraw notifications.

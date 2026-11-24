@@ -7,9 +7,12 @@
 #include <openssl/rand.h>
 
 #include <array>
+#include <charconv>
+#include <cstdlib>
 #include <fstream>
 #include <memory>
 #include <stdexcept>
+#include <string_view>
 #include <vector>
 
 #ifndef CROSSDESK_UPDATE_PUBLIC_KEY
@@ -23,6 +26,8 @@ namespace crossdesk::updater {
 namespace {
 constexpr std::uint64_t kMaxPackageSize = 2ULL * 1024 * 1024 * 1024;
 constexpr const char* kDownloadOrigin = "https://downloads.crossdesk.cn";
+constexpr std::string_view kForkOrigin = "https://github.com";
+constexpr std::string_view kForkDownloadPath = "/fortruelove/crossdesk/releases/download/";
 
 std::string Hex(const unsigned char* data, std::size_t length) {
   constexpr char digits[] = "0123456789abcdef";
@@ -63,6 +68,63 @@ std::string ExpectedFilename(const std::string& platform, const std::string& ver
   }
   throw std::runtime_error("Unsupported update platform");
 }
+
+bool IsForkInstaller(const Artifact& artifact) {
+  return artifact.platform == "windows-x64" &&
+         artifact.version.find_first_not_of("0123456789.") == std::string::npos &&
+         artifact.filename == "crossdesk-win-x64-" + artifact.version + ".exe" &&
+         artifact.url == std::string(kForkOrigin) + std::string(kForkDownloadPath) +
+                             "v" + artifact.version + "/" + artifact.filename;
+}
+
+bool IsOfficialDownload(const Artifact& artifact) {
+  return artifact.filename == ExpectedFilename(artifact.platform, artifact.version) &&
+         artifact.url == std::string(kDownloadOrigin) + "/" + artifact.filename;
+}
+
+bool IsGithubAssetOrigin(std::string_view origin) {
+  return origin == "https://release-assets.githubusercontent.com" ||
+         origin == "https://objects.githubusercontent.com";
+}
+
+void ConfigureGithubProxy(httplib::Client& client, std::string_view origin) {
+  const char* configured = std::getenv("HTTPS_PROXY");
+  if (!configured) configured = std::getenv("https_proxy");
+  if (!configured) return;
+  std::string_view proxy(configured);
+  constexpr std::string_view scheme = "http://";
+  if (proxy.substr(0, scheme.size()) == scheme) proxy.remove_prefix(scheme.size());
+  const auto delimiter = proxy.rfind(':');
+  if (delimiter == std::string_view::npos || delimiter == 0 ||
+      proxy.find_first_of("@/\\?# \t\r\n") != std::string_view::npos) return;
+  const auto host = proxy.substr(0, delimiter);
+  if (host.find(':') != std::string_view::npos) return;
+  const auto port_text = proxy.substr(delimiter + 1);
+  int port = 0;
+  const auto parsed = std::from_chars(port_text.data(), port_text.data() + port_text.size(), port);
+  if (parsed.ec != std::errc{} || parsed.ptr != port_text.data() + port_text.size() ||
+      port < 1 || port > 65535) return;
+
+  const char* bypass = std::getenv("NO_PROXY");
+  if (!bypass) bypass = std::getenv("no_proxy");
+  const auto target = origin.substr(sizeof("https://") - 1);
+  std::string_view bypass_list = bypass ? bypass : "";
+  while (!bypass_list.empty()) {
+    const auto comma = bypass_list.find(',');
+    auto domain = bypass_list.substr(0, comma);
+    const auto first = domain.find_first_not_of(" \t.");
+    if (first != std::string_view::npos) {
+      domain = domain.substr(first, domain.find_last_not_of(" \t") - first + 1);
+      if (domain == "*" || domain == target ||
+          (target.size() > domain.size() &&
+           target[target.size() - domain.size() - 1] == '.' &&
+           target.substr(target.size() - domain.size()) == domain)) return;
+    }
+    if (comma == std::string_view::npos) break;
+    bypass_list.remove_prefix(comma + 1);
+  }
+  client.set_proxy(std::string(host), port);
+}
 }  // namespace
 
 std::string PublicKey() { return CROSSDESK_UPDATE_PUBLIC_KEY; }
@@ -99,8 +161,8 @@ Artifact VerifyEnvelope(const std::string& envelope, const std::string& public_k
       !IsNewerVersion(current_version, artifact.version))
     throw std::runtime_error("Update platform/version does not match this installation");
   if (!artifact.size || artifact.size > kMaxPackageSize ||
-      artifact.filename != ExpectedFilename(platform, artifact.version) ||
-      artifact.url != std::string(kDownloadOrigin) + "/" + artifact.filename)
+      !(platform == "windows-x64" ? IsForkInstaller(artifact) :
+                                    IsOfficialDownload(artifact)))
     throw std::runtime_error("Invalid update package metadata");
   Unhex(artifact.sha256, 32);
   return artifact;
@@ -186,34 +248,57 @@ void VerifyPackage(const fs::path& file, const Artifact& artifact) {
 
 void DownloadPackage(const Artifact& artifact, const fs::path& destination,
                      std::atomic<int>& progress, const std::atomic<bool>& cancel) {
-  httplib::Client client(kDownloadOrigin);
-  client.set_connection_timeout(10);
-  client.set_read_timeout(30);
-  client.set_write_timeout(10);
-  client.set_max_timeout(30 * 60 * 1000);
-  client.set_follow_location(false);
-#if defined(__linux__)
-  for (const char* bundle : {"/etc/ssl/certs/ca-certificates.crt", "/etc/pki/tls/certs/ca-bundle.crt"}) {
-    if (fs::exists(bundle)) { client.set_ca_cert_path(bundle); break; }
-  }
-#endif
+  const bool fork = IsForkInstaller(artifact);
+  if (!fork && !IsOfficialDownload(artifact))
+    throw std::runtime_error("Invalid update download URL");
   std::ofstream file(destination, std::ios::binary | std::ios::trunc);
   if (!file) throw std::runtime_error("Cannot create update download");
   std::uint64_t received = 0;
-  const auto response = client.Get(("/" + artifact.filename).c_str(),
-      [&](const httplib::Response& headers) {
-        return headers.status == 200 && !cancel.load();
-      },
-      [&](const char* data, std::size_t length) {
-        if (cancel.load() || length > artifact.size - received) return false;
-        file.write(data, static_cast<std::streamsize>(length));
-        received += length;
-        progress.store(static_cast<int>(received * 100 / artifact.size));
-        return static_cast<bool>(file);
-      });
+  std::string redirect;
+  int http_status = 0;
+  auto get = [&](const std::string& origin, const std::string& path, bool allow_redirect) {
+    httplib::Client client(origin);
+    if (fork) ConfigureGithubProxy(client, origin);
+    client.set_connection_timeout(10);
+    client.set_read_timeout(30);
+    client.set_write_timeout(10);
+    client.set_max_timeout(30 * 60 * 1000);
+    client.set_follow_location(false);
+#if defined(__linux__)
+    for (const char* bundle : {"/etc/ssl/certs/ca-certificates.crt", "/etc/pki/tls/certs/ca-bundle.crt"}) {
+      if (fs::exists(bundle)) { client.set_ca_cert_path(bundle); break; }
+    }
+#endif
+    return client.Get(path,
+        [&](const httplib::Response& headers) {
+          http_status = headers.status;
+          if (allow_redirect && (headers.status == 302 || headers.status == 307))
+            redirect = headers.get_header_value("Location");
+          return headers.status == 200 && !cancel.load();
+        },
+        [&](const char* data, std::size_t length) {
+          if (cancel.load() || length > artifact.size - received) return false;
+          file.write(data, static_cast<std::streamsize>(length));
+          received += length;
+          progress.store(static_cast<int>(received * 100 / artifact.size));
+          return static_cast<bool>(file);
+        });
+  };
+  const std::string origin = fork ? std::string(kForkOrigin) : kDownloadOrigin;
+  auto response = get(origin, artifact.url.substr(origin.size()), fork);
+  if (!redirect.empty() && !cancel.load()) {
+    const auto path = redirect.find('/', sizeof("https://") - 1);
+    if (path == std::string::npos || !IsGithubAssetOrigin(std::string_view(redirect).substr(0, path)))
+      throw std::runtime_error("Unexpected GitHub installer download host");
+    http_status = 0;
+    response = get(redirect.substr(0, path), redirect.substr(path), false);
+  }
   file.close();
-  if (!response || response->status != 200 || !file || received != artifact.size || cancel.load())
-    throw std::runtime_error(cancel.load() ? "Update cancelled" : "Update download failed");
+  if (cancel.load()) throw std::runtime_error("Update cancelled");
+  if (http_status && http_status != 200)
+    throw std::runtime_error("Update download returned HTTP " + std::to_string(http_status));
+  if (!response || response->status != 200 || !file || received != artifact.size)
+    throw std::runtime_error("Update download incomplete: " + httplib::to_string(response.error()));
   VerifyPackage(destination, artifact);
 }
 
