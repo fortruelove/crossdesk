@@ -4,7 +4,6 @@
 #import <CoreVideo/CVMetalTextureCache.h>
 #import <Metal/Metal.h>
 #import <QuartzCore/CABase.h>
-#import <QuartzCore/CAEDRMetadata.h>
 #import <QuartzCore/CAMetalLayer.h>
 #import <QuartzCore/CATransaction.h>
 
@@ -14,7 +13,6 @@
 #include <cmath>
 #include <cstring>
 #include <limits>
-#include <libyuv.h>
 #include <mutex>
 #include <utility>
 
@@ -39,6 +37,7 @@
 @interface CrossDeskStreamTitleView : CrossDeskDecorationView
 @property(nonatomic, copy) BOOL (^windowLayoutHandler)(NSWindow* window);
 @property(nonatomic, copy) void (^surfaceInvalidationHandler)(void);
+@property(nonatomic, copy) void (^resizeVideoHandler)(NSWindow*);
 @property(nonatomic) BOOL windowLayoutPending;
 - (instancetype)initWithWindow:(NSWindow*)window;
 @end
@@ -173,6 +172,11 @@
 }
 
 - (void)windowDidResize:(NSNotification*)notification {
+  if (self.resizeVideoHandler) self.resizeVideoHandler(notification.object);
+  // The compositor scales the existing image during the Space animation.
+  // The titlebar and cached frame only need refreshing at its final size.
+  if (crossdesk::IsStreamWindowFullscreenTransitioning(
+          (__bridge void*)_streamWindow.contentView)) return;
   [self invalidateVideoSurface];
   self.windowLayoutPending = YES;
   [self applyWindowLayout];
@@ -190,7 +194,8 @@
 - (void)windowDidToggleFullscreen:(NSNotification*)notification {
   _titlebarBackground.alphaValue =
       (_streamWindow.styleMask & NSWindowStyleMaskFullScreen) ? 0 : 1;
-  [self windowDidResize:notification];
+  [self invalidateVideoSurface];
+  self.windowLayoutPending = ![self applyWindowLayout];
 }
 
 - (void)windowBackingPropertiesChanged:(NSNotification*)notification {
@@ -307,16 +312,14 @@ const MiniRtcNativeVideoFrame* GetMacNativeFrame(
     const MiniRtcNativeVideoFrame& frame) {
   const MiniRtcNativeVideoFrame* native = &frame;
   if (native->struct_size < static_cast<uint32_t>(sizeof(*native)) ||
-      (native->type != MiniRtcNativeVideoFrameCVPixelBuffer &&
-       native->type != MiniRtcNativeVideoFrameHdr10) ||
-      !(native->type == MiniRtcNativeVideoFrameHdr10
-            ? native->payload.hdr10.i010 != nullptr
-            : native->payload.cv_pixel_buffer != nullptr) ||
-      !native->owner || !native->retain || !native->release || !native->copy_to_nv12 ||
-      native->width == 0 || native->height == 0 || (native->width & 1U) != 0 ||
+      native->type != MiniRtcNativeVideoFrameCVPixelBuffer ||
+      !native->payload.cv_pixel_buffer || !native->owner || !native->retain ||
+      !native->release || !native->copy_to_nv12 || native->width == 0 ||
+      native->height == 0 || (native->width & 1U) != 0 ||
       (native->height & 1U) != 0 ||
       native->width > static_cast<uint32_t>(std::numeric_limits<int>::max()) ||
-      native->height > static_cast<uint32_t>(std::numeric_limits<int>::max())) {
+      native->height >
+          static_cast<uint32_t>(std::numeric_limits<int>::max())) {
     return nullptr;
   }
   return native;
@@ -382,7 +385,13 @@ enum class SlotUse {
   in_flight,
 };
 
+struct Nv12Color {
+  uint32_t full_range = 0;
+  uint32_t bt709 = 0;
+};
+
 struct FrameSlot {
+  Nv12Color color;
   id<MTLBuffer> y_buffer = nil;
   id<MTLBuffer> uv_buffer = nil;
   id<MTLTexture> y_texture = nil;
@@ -399,8 +408,6 @@ struct FrameSlot {
   VideoLatencyFrame timing;
   SlotUse use = SlotUse::available;
   bool valid = false;
-  bool hdr = false;
-  uint32_t sdr_flags = 0;
 
   void ReleaseResources() {
     y_texture = nil;
@@ -414,8 +421,7 @@ struct FrameSlot {
       uv_cv_texture = nullptr;
     }
     native_frame.Reset();
-    hdr = false;
-    sdr_flags = 0;
+    color = {};
     y_buffer = nil;
     uv_buffer = nil;
     y_stride = 0;
@@ -496,7 +502,8 @@ bool AllocateSlot(id<MTLDevice> device, FrameSlot& slot, int width,
   return true;
 }
 
-NSString* Nv12ShaderSource() { return @R"metal(
+NSString* Nv12ShaderSource() {
+  return @R"metal(
 #include <metal_stdlib>
 using namespace metal;
 
@@ -520,42 +527,32 @@ vertex RasterData nv12_vertex(uint vertex_id [[vertex_id]]) {
   return out;
 }
 
+struct Nv12Color {
+  uint full_range;
+  uint bt709;
+};
+
 fragment half4 nv12_fragment(
     RasterData in [[stage_in]],
     texture2d<float, access::sample> y_texture [[texture(0)]],
     texture2d<float, access::sample> uv_texture [[texture(1)]],
-    constant uint& hdr_mode [[buffer(0)]]) {
+    constant Nv12Color& color [[buffer(0)]]) {
   constexpr sampler video_sampler(coord::normalized,
                                   address::clamp_to_edge,
                                   filter::linear);
-  if ((hdr_mode & 3) != 0) {
-    // P010 samples are left aligned in 16-bit UNORM textures.
-    float y = (y_texture.sample(video_sampler, in.texcoord).r * (65535.0/64.0) - 64.0)/876.0;
-    float2 uv = (uv_texture.sample(video_sampler, in.texcoord).rg * (65535.0/64.0) - 512.0)/896.0;
-    float3 pq = saturate(float3(y + 1.4746*uv.y, y - .164553*uv.x - .571353*uv.y, y + 1.8814*uv.x));
-    if (hdr_mode == 1) return half4(half3(pq), 1.0h);
-    float3 p = pow(pq, 32.0/2523.0);
-    float3 linear = (10000.0/203.0) * pow(max(p - 3424.0/4096.0, 0.0) /
-                    (2413.0/128.0 - 2392.0/128.0*p), 16384.0/2610.0);
-    float3 rgb = max(float3(dot(linear,float3(1.660491,-.587641,-.072850)),
-                            dot(linear,float3(-.124550,1.132900,-.008349)),
-                            dot(linear,float3(-.018151,-.100579,1.118730))), 0.0);
-    rgb = select(rgb, 1.0 - .0625/max(rgb-.5,.25), rgb > .75);
-    rgb = select(12.92*rgb, 1.055*pow(rgb,1.0/2.4)-.055, rgb > .0031308);
-    return half4(half3(rgb), 1.0h);
-  }
   float y = y_texture.sample(video_sampler, in.texcoord).r;
   float2 uv = uv_texture.sample(video_sampler, in.texcoord).rg - 128.0 / 255.0;
-  if ((hdr_mode & 4) == 0) {
+  if (!color.full_range) {
     y = (y - 16.0 / 255.0) * (255.0 / 219.0);
     uv *= 255.0 / 224.0;
   }
-  const float3 rgb = (hdr_mode & 8) != 0
+  const float3 rgb = color.bt709
       ? float3(y + 1.5748 * uv.y, y - .187324 * uv.x - .468124 * uv.y, y + 1.8556 * uv.x)
       : float3(y + 1.402 * uv.y, y - .344136 * uv.x - .714136 * uv.y, y + 1.772 * uv.x);
   return half4(half3(saturate(rgb)), 1.0h);
 }
-)metal"; }
+)metal";
+}
 
 }  // namespace
 
@@ -563,7 +560,6 @@ struct MacMetalVideoRenderer::Impl {
   id<MTLDevice> device = nil;
   id<MTLCommandQueue> command_queue = nil;
   id<MTLRenderPipelineState> pipeline = nil;
-  id<MTLRenderPipelineState> hdr_pipeline = nil;
   CVMetalTextureCacheRef texture_cache = nullptr;
   std::shared_ptr<SharedFrameState> frames =
       std::make_shared<SharedFrameState>();
@@ -572,6 +568,13 @@ struct MacMetalVideoRenderer::Impl {
   NSLayoutConstraint* video_top = nil;
   NSTitlebarAccessoryViewController* title_accessory_controller = nil;
   CAMetalLayer* metal_layer = nil;
+  struct DrawableRequest {
+    id<CAMetalDrawable> drawable = nil;
+    double wait_ms = 0;
+    bool complete = false;
+  };
+  std::shared_ptr<DrawableRequest> drawable_request;
+  std::function<void()> drawable_ready;
   std::atomic<bool> attached{false};
   std::string rendered_stream;
   uint64_t rendered_content_generation = 0;
@@ -623,8 +626,6 @@ struct MacMetalVideoRenderer::Impl {
       NSError* pipeline_error = nil;
       pipeline = [device newRenderPipelineStateWithDescriptor:descriptor
                                                         error:&pipeline_error];
-      descriptor.colorAttachments[0].pixelFormat = MTLPixelFormatRGBA16Float;
-      hdr_pipeline = [device newRenderPipelineStateWithDescriptor:descriptor error:nullptr];
       if (pipeline == nil) {
         const char* message = pipeline_error.localizedDescription.UTF8String;
         LOG_ERROR("Metal NV12 pipeline creation failed: {}",
@@ -647,10 +648,53 @@ struct MacMetalVideoRenderer::Impl {
     return device != nil && command_queue != nil && pipeline != nil;
   }
 
+  // WindowServer can hold both drawables during a fullscreen Space change.
+  // Keep the window thread free to animate and leave the latest frame queued.
+  id<CAMetalDrawable> TakeTransitionDrawable(double& wait_ms) {
+    if (drawable_request) {
+      if (!drawable_request->complete) return nil;
+      auto ready = std::move(drawable_request);
+      id<CAMetalDrawable> drawable = ready->drawable;
+      const CGSize size = metal_layer.drawableSize;
+      if (drawable && drawable.texture.width == size.width &&
+          drawable.texture.height == size.height) {
+        wait_ms = ready->wait_ms;
+        return drawable;
+      }
+    }
+    drawable_request = std::make_shared<DrawableRequest>();
+    std::weak_ptr<DrawableRequest> weak_request = drawable_request;
+    CAMetalLayer* layer = metal_layer;
+    const auto notify = drawable_ready;
+    const auto dirty = native_surface_needs_redraw;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INTERACTIVE, 0), ^{
+      @autoreleasepool {
+        const auto start = VideoLatencyFrame::Clock::now();
+        id<CAMetalDrawable> drawable = [layer nextDrawable];
+        const double elapsed = std::chrono::duration<double, std::milli>(
+            VideoLatencyFrame::Clock::now() - start).count();
+        dispatch_async(dispatch_get_main_queue(), ^{
+          // Detaching cancels this request, including a queued UI wakeup.
+          if (auto request = weak_request.lock()) {
+            request->drawable = drawable;
+            request->wait_ms = elapsed;
+            request->complete = true;
+            dirty->store(true, std::memory_order_release);
+            if (drawable && notify) notify();
+          }
+        });
+      }
+    });
+    return nil;
+  }
+
   void DetachViews() {
     @autoreleasepool {
       attached.store(false, std::memory_order_release);
+      drawable_request.reset();
+      drawable_ready = {};
       NSWindow* window = slint_view.window;
+      ((CrossDeskStreamTitleView*)title_accessory_controller.view).resizeVideoHandler = nil;
       if (video_view != nil) {
         [video_view removeFromSuperview];
       }
@@ -837,43 +881,14 @@ MacMetalVideoRenderer::SubmitResult MacMetalVideoRenderer::SubmitNativeFrame(
     return SubmitNv12(remote_id, packed_nv12.data(), packed_nv12.size(), width, height, timing);
   };
 
-  const bool hdr = native->type == MiniRtcNativeVideoFrameHdr10;
-  struct TemporaryImage {
-    CVPixelBufferRef buffer = nullptr;
-    ~TemporaryImage() {
-      if (buffer) CFRelease(buffer);
-    }
-  } image;
-  CVPixelBufferRef pixel_buffer = nullptr;
-  if (hdr) {
-    NSDictionary* attrs = @{
-      (id)kCVPixelBufferMetalCompatibilityKey : @YES,
-      (id)kCVPixelBufferIOSurfacePropertiesKey : @{}
-    };
-    if (CVPixelBufferCreate(nullptr, width, height,
-                            kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange,
-                            (__bridge CFDictionaryRef)attrs, &image.buffer) != kCVReturnSuccess ||
-        CVPixelBufferLockBaseAddress(image.buffer, 0) != kCVReturnSuccess)
-      return submit_cpu_fallback();
-    pixel_buffer = image.buffer;
-    const uint16_t* y = native->payload.hdr10.i010;
-    const uint16_t* u = y + size_t(width) * height;
-    int converted = libyuv::I010ToP010(
-        y, width, u, width / 2, u + size_t(width) * height / 4, width / 2,
-        static_cast<uint16_t*>(CVPixelBufferGetBaseAddressOfPlane(pixel_buffer, 0)),
-        static_cast<int>(CVPixelBufferGetBytesPerRowOfPlane(pixel_buffer, 0) / 2),
-        static_cast<uint16_t*>(CVPixelBufferGetBaseAddressOfPlane(pixel_buffer, 1)),
-        static_cast<int>(CVPixelBufferGetBytesPerRowOfPlane(pixel_buffer, 1) / 2), width, height);
-    CVPixelBufferUnlockBaseAddress(pixel_buffer, 0);
-    if (converted != 0) return submit_cpu_fallback();
-  } else {
-    pixel_buffer = static_cast<CVPixelBufferRef>(native->payload.cv_pixel_buffer);
-  }
+  CVPixelBufferRef pixel_buffer =
+      static_cast<CVPixelBufferRef>(native->payload.cv_pixel_buffer);
   const OSType pixel_format = CVPixelBufferGetPixelFormatType(pixel_buffer);
-  if (!CVPixelBufferIsPlanar(pixel_buffer) || CVPixelBufferGetPlaneCount(pixel_buffer) < 2 ||
+  if (!CVPixelBufferIsPlanar(pixel_buffer) ||
+      CVPixelBufferGetPlaneCount(pixel_buffer) < 2 ||
       CVPixelBufferGetWidth(pixel_buffer) != native->width ||
       CVPixelBufferGetHeight(pixel_buffer) != native->height ||
-      (!hdr && pixel_format != kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange &&
+      (pixel_format != kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange &&
        pixel_format != kCVPixelFormatType_420YpCbCr8BiPlanarFullRange)) {
     return submit_cpu_fallback();
   }
@@ -886,7 +901,7 @@ MacMetalVideoRenderer::SubmitResult MacMetalVideoRenderer::SubmitNativeFrame(
   CVMetalTextureRef y_cv_texture = nullptr;
   CVReturn y_status = CVMetalTextureCacheCreateTextureFromImage(
       kCFAllocatorDefault, impl_->texture_cache, pixel_buffer, nullptr,
-      hdr ? MTLPixelFormatR16Unorm : MTLPixelFormatR8Unorm, native->width, native->height, 0,
+      MTLPixelFormatR8Unorm, native->width, native->height, 0,
       &y_cv_texture);
   if (y_status != kCVReturnSuccess || !y_cv_texture) {
     return submit_cpu_fallback();
@@ -895,8 +910,8 @@ MacMetalVideoRenderer::SubmitResult MacMetalVideoRenderer::SubmitNativeFrame(
   CVMetalTextureRef uv_cv_texture = nullptr;
   CVReturn uv_status = CVMetalTextureCacheCreateTextureFromImage(
       kCFAllocatorDefault, impl_->texture_cache, pixel_buffer, nullptr,
-      hdr ? MTLPixelFormatRG16Unorm : MTLPixelFormatRG8Unorm, native->width / 2U,
-      native->height / 2U, 1, &uv_cv_texture);
+      MTLPixelFormatRG8Unorm, native->width / 2U, native->height / 2U, 1,
+      &uv_cv_texture);
   if (uv_status != kCVReturnSuccess || !uv_cv_texture) {
     CFRelease(y_cv_texture);
     return submit_cpu_fallback();
@@ -959,14 +974,10 @@ MacMetalVideoRenderer::SubmitResult MacMetalVideoRenderer::SubmitNativeFrame(
   target->y_texture = y_texture;
   target->uv_texture = uv_texture;
   target->native_frame = std::move(retained);
-  target->hdr = hdr;
-  if (!hdr) {
-    CFTypeRef matrix = CVBufferCopyAttachment(pixel_buffer, kCVImageBufferYCbCrMatrixKey, nullptr);
-    target->sdr_flags =
-        (pixel_format == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange ? 4u : 0u) |
-        (matrix && CFEqual(matrix, kCVImageBufferYCbCrMatrix_ITU_R_709_2) ? 8u : 0u);
-    if (matrix) CFRelease(matrix);
-  }
+  CFTypeRef matrix = CVBufferCopyAttachment(pixel_buffer, kCVImageBufferYCbCrMatrixKey, nullptr);
+  target->color = {pixel_format == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
+                   matrix && CFEqual(matrix, kCVImageBufferYCbCrMatrix_ITU_R_709_2)};
+  if (matrix) CFRelease(matrix);
   target->width = width;
   target->height = height;
   target->remote_id.assign(remote_id);
@@ -1074,7 +1085,8 @@ MacMetalVideoRenderer::SubmitResult MacMetalVideoRenderer::SubmitNv12Internal(
   return SubmitResult::submitted;
 }
 
-bool MacMetalVideoRenderer::Attach(void* opaque_slint_view) {
+bool MacMetalVideoRenderer::Attach(void* opaque_slint_view,
+                                   std::function<void()> drawable_ready) {
   if (!IsReady() || opaque_slint_view == nullptr) {
     return false;
   }
@@ -1094,6 +1106,7 @@ bool MacMetalVideoRenderer::Attach(void* opaque_slint_view) {
     }
 
     impl_->DetachViews();
+    impl_->drawable_ready = std::move(drawable_ready);
     ConfigureStreamWindowChrome(window);
     impl_->slint_view = requested_view;
     impl_->slint_view.wantsLayer = YES;
@@ -1109,7 +1122,10 @@ bool MacMetalVideoRenderer::Attach(void* opaque_slint_view) {
     impl_->metal_layer.framebufferOnly = YES;
     impl_->metal_layer.opaque = YES;
     impl_->metal_layer.backgroundColor = NSColor.blackColor.CGColor;
-    impl_->metal_layer.maximumDrawableCount = 3;
+    // Two drawables keep one frame in the compositor while the next renders.
+    // The default of three lets a slow GPU frame sit an extra display interval
+    // before it reaches the screen, which is pure added latency for live video.
+    impl_->metal_layer.maximumDrawableCount = 2;
     impl_->metal_layer.displaySyncEnabled = YES;
 
     [requested_view.superview addSubview:impl_->video_view
@@ -1135,6 +1151,14 @@ bool MacMetalVideoRenderer::Attach(void* opaque_slint_view) {
     const auto surface_dirty_flag = impl_->native_surface_needs_redraw;
     title_view.surfaceInvalidationHandler = ^{
       surface_dirty_flag->store(true, std::memory_order_release);
+    };
+    title_view.resizeVideoHandler = ^(NSWindow* resized_window) {
+      // Native zoom runs a nested AppKit loop. Resize notifications continue
+      // while the usual main-queue wakeup for a decoded frame is waiting.
+      if (impl_->rendered_stream.empty() || resized_window.isMiniaturized ||
+          !(resized_window.occlusionState & NSWindowOcclusionStateVisible)) return;
+      const CGSize size = impl_->metal_layer.drawableSize;
+      DrawFrame(impl_->rendered_stream, size.width, size.height, false);
     };
     impl_->title_accessory_controller.view = title_view;
     [window addTitlebarAccessoryViewController:
@@ -1199,14 +1223,20 @@ MacMetalVideoRenderer::RenderOutcome MacMetalVideoRenderer::RenderLatest(
 
   @autoreleasepool {
     const CGSize raster_limit = impl_->UpdateVideoGeometry(top_inset_points);
-    if (raster_limit.width <= 0 || raster_limit.height <= 0) return {RenderResult::idle};
+    return DrawFrame(remote_id, raster_limit.width, raster_limit.height, true);
+  }
+}
+
+MacMetalVideoRenderer::RenderOutcome MacMetalVideoRenderer::DrawFrame(
+    std::string_view remote_id, double raster_width, double raster_height,
+    bool allow_cached_frame) {
+  if (raster_width <= 0 || raster_height <= 0) return {RenderResult::idle};
+  @autoreleasepool {
     const bool stream_changed = impl_->rendered_stream != remote_id;
     size_t slot_index = kFrameSlotCount;
     uint64_t sequence = 0;
     int source_width = 0;
     int source_height = 0;
-    bool hdr_frame = false;
-    uint32_t sdr_flags = 0;
     bool matching_frame_in_flight = false;
     uint64_t content_generation = 0;
     bool redraw_cached_frame = false;
@@ -1245,15 +1275,14 @@ MacMetalVideoRenderer::RenderOutcome MacMetalVideoRenderer::RenderLatest(
         return {RenderResult::idle};
       }
       content_generation = impl_->frames->content_generation;
-      redraw_cached_frame = stream_changed ||
+      redraw_cached_frame = allow_cached_frame && (stream_changed ||
           impl_->native_surface_needs_redraw->load(std::memory_order_acquire) ||
-          impl_->rendered_content_generation != content_generation;
+          impl_->rendered_content_generation != content_generation);
       select_latest();
       if (slot_index == kFrameSlotCount && !redraw_cached_frame) {
         return {RenderResult::idle};
       }
       if (slot_index != kFrameSlotCount) {
-        hdr_frame = impl_->frames->slots[slot_index].hdr;
         source_width = impl_->frames->slots[slot_index].width;
         source_height = impl_->frames->slots[slot_index].height;
       }
@@ -1262,39 +1291,30 @@ MacMetalVideoRenderer::RenderOutcome MacMetalVideoRenderer::RenderLatest(
     // Keep letterboxing in the compositor. It can scale the last presented
     // image with the window even while the remote desktop is idle.
     if (source_width > 0 && source_height > 0) {
-      const CGFloat scale = std::min<CGFloat>({1, raster_limit.width / source_width,
-                                               raster_limit.height / source_height});
+      const CGFloat scale = std::min<CGFloat>({1, raster_width / source_width,
+                                               raster_height / source_height});
       const CGSize size = CGSizeMake(std::max<CGFloat>(1, std::round(source_width * scale)),
                                      std::max<CGFloat>(1, std::round(source_height * scale)));
       if (!CGSizeEqualToSize(impl_->metal_layer.drawableSize, size))
         impl_->metal_layer.drawableSize = size;
     }
-    const bool show_hdr =
-        hdr_frame && impl_->hdr_pipeline &&
-        impl_->video_view.window.screen.maximumPotentialExtendedDynamicRangeColorComponentValue > 1;
-    const auto format = show_hdr ? MTLPixelFormatRGBA16Float : MTLPixelFormatBGRA8Unorm;
-    if (impl_->metal_layer.pixelFormat != format) {
-      auto space =
-          CGColorSpaceCreateWithName(show_hdr ? kCGColorSpaceITUR_2100_PQ : kCGColorSpaceSRGB);
-      impl_->metal_layer.colorspace = space;
-      CGColorSpaceRelease(space);
-      impl_->metal_layer.wantsExtendedDynamicRangeContent = show_hdr;
-      impl_->metal_layer.EDRMetadata = show_hdr ? [CAEDRMetadata HDR10MetadataWithDisplayInfo:nil
-                                                                                  contentInfo:nil
-                                                                           opticalOutputScale:100.f]
-                                                : nil;
-      impl_->metal_layer.pixelFormat = format;
-    }
-    const auto drawable_started = VideoLatencyFrame::Clock::now();
-    id<CAMetalDrawable> drawable = [impl_->metal_layer nextDrawable];
-    const double drawable_wait_ms = std::chrono::duration<double, std::milli>(
-        VideoLatencyFrame::Clock::now() - drawable_started).count();
-    if (drawable == nil) {
-      return {impl_->MissingDrawableResult()};
+    double drawable_wait_ms = 0;
+    id<CAMetalDrawable> drawable = nil;
+    if (impl_->drawable_request ||
+        IsStreamWindowFullscreenTransitioning((__bridge void*)impl_->slint_view)) {
+      drawable = impl_->TakeTransitionDrawable(drawable_wait_ms);
+      if (!drawable) return {RenderResult::idle};
+    } else {
+      const auto start = VideoLatencyFrame::Clock::now();
+      drawable = [impl_->metal_layer nextDrawable];
+      drawable_wait_ms = std::chrono::duration<double, std::milli>(
+          VideoLatencyFrame::Clock::now() - start).count();
+      if (!drawable) return {impl_->MissingDrawableResult()};
     }
 
     id<MTLTexture> y_texture = nil;
     id<MTLTexture> uv_texture = nil;
+    Nv12Color color;
     VideoLatencyFrame timing;
     {
       std::lock_guard lock(impl_->frames->mutex);
@@ -1309,7 +1329,7 @@ MacMetalVideoRenderer::RenderOutcome MacMetalVideoRenderer::RenderLatest(
       select_latest();
       if (slot_index != kFrameSlotCount) {
         auto& slot = impl_->frames->slots[slot_index];
-        if (slot.hdr != hdr_frame || slot.width != source_width || slot.height != source_height) {
+        if (slot.width != source_width || slot.height != source_height) {
           impl_->native_surface_needs_redraw->store(true, std::memory_order_release);
           return {RenderResult::idle};
         }
@@ -1317,7 +1337,7 @@ MacMetalVideoRenderer::RenderOutcome MacMetalVideoRenderer::RenderLatest(
         y_texture = slot.y_texture;
         uv_texture = slot.uv_texture;
         timing = slot.timing;
-        sdr_flags = slot.sdr_flags;
+        color = slot.color;
       }
     }
     if (slot_index == kFrameSlotCount) {
@@ -1368,9 +1388,8 @@ MacMetalVideoRenderer::RenderOutcome MacMetalVideoRenderer::RenderLatest(
       return {RenderResult::failed};
     }
 
-    [encoder setRenderPipelineState:(show_hdr ? impl_->hdr_pipeline : impl_->pipeline)];
-    const uint32_t hdr_mode = show_hdr ? 1u : hdr_frame ? 2u : sdr_flags;
-    [encoder setFragmentBytes:&hdr_mode length:sizeof(hdr_mode) atIndex:0];
+    [encoder setRenderPipelineState:impl_->pipeline];
+    [encoder setFragmentBytes:&color length:sizeof(color) atIndex:0];
     [encoder setFragmentTexture:y_texture atIndex:0];
     [encoder setFragmentTexture:uv_texture atIndex:1];
     [encoder drawPrimitives:MTLPrimitiveTypeTriangleStrip
