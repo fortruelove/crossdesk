@@ -296,26 +296,50 @@ private final class RemoteAudioPlayer {
     }
 }
 
-struct SignalServerConfiguration: Equatable {
+struct SignalServerConfiguration: Codable, Equatable {
     let host: String
     let signalPort: Int
 
     static let official = Self(host: "api.crossdesk.cn", signalPort: 9099)
     private static let customServerKey = "crossdesk.mobile.custom-signal-server"
 
-    static func loadCustom() -> Self? {
-        guard let saved = UserDefaults.standard.dictionary(forKey: customServerKey),
+    private struct SavedSelection: Codable {
+        var server: SignalServerConfiguration?
+    }
+
+    private static var settingsFile: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("CrossDeskMobile", isDirectory: true)
+            .appendingPathComponent("SignalServer.json")
+    }
+
+    static func loadCustom(file: URL? = nil, defaults: UserDefaults = .standard) -> Self? {
+        let destination = file ?? settingsFile
+        if let data = try? Data(contentsOf: destination),
+           let selection = try? JSONDecoder().decode(SavedSelection.self, from: data) {
+            return selection.server
+        }
+
+        guard let saved = defaults.dictionary(forKey: customServerKey),
               let host = (saved["host"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
               !host.isEmpty,
               let port = saved["port"] as? Int, (1...65535).contains(port) else { return nil }
-        return Self(host: host, signalPort: port)
+        let server = Self(host: host, signalPort: port)
+        try? saveCustom(server, file: destination, defaults: defaults)
+        return server
     }
 
-    static func saveCustom(_ server: Self?) {
+    static func saveCustom(_ server: Self?, file: URL? = nil,
+                           defaults: UserDefaults = .standard) throws {
+        let destination = file ?? settingsFile
+        try FileManager.default.createDirectory(
+            at: destination.deletingLastPathComponent(), withIntermediateDirectories: true
+        )
+        try JSONEncoder().encode(SavedSelection(server: server)).write(to: destination, options: .atomic)
         if let server {
-            UserDefaults.standard.set(["host": server.host, "port": server.signalPort], forKey: customServerKey)
+            defaults.set(["host": server.host, "port": server.signalPort], forKey: customServerKey)
         } else {
-            UserDefaults.standard.removeObject(forKey: customServerKey)
+            defaults.removeObject(forKey: customServerKey)
         }
     }
 }
@@ -477,6 +501,9 @@ final class RemoteSessionModel: NSObject, ObservableObject, CrossDeskRTCBridgeDe
         pictureInPicture.didBecomeActive()
         appUpdates.setEnabled(hasNetworkConsent)
         privacyNotice.didBecomeActive(hasNetworkConsent: hasNetworkConsent)
+        if hasNetworkConsent, bridgeConfiguration != (customServer ?? .official) {
+            configureBridge()
+        }
         refreshRecentConnectionPresenceAfterForeground()
         refreshAnnouncements()
         resumeVideoAfterForeground()
@@ -557,11 +584,16 @@ final class RemoteSessionModel: NSObject, ObservableObject, CrossDeskRTCBridgeDe
         }
     }
 
-    func setCustomServer(_ server: SignalServerConfiguration?) {
-        guard server != customServer else { return }
-        SignalServerConfiguration.saveCustom(server)
+    func setCustomServer(_ server: SignalServerConfiguration?, applyImmediately: Bool = true) -> Bool {
+        guard server != customServer else { return true }
+        do {
+            try SignalServerConfiguration.saveCustom(server)
+        } catch {
+            return false
+        }
         customServer = server
-        configureBridge()
+        if applyImmediately { configureBridge() }
+        return true
     }
 
     @discardableResult

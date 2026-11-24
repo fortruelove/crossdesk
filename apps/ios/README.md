@@ -16,6 +16,10 @@ remain available. The native archive excludes GUPnP and its HTTP/XML dependencie
 
 Open **Settings → This device’s pairing info** to view the fingerprint and copy the public pairing information. Import it under **Manage trusted devices → Add a trusted device** on the controlled desktop and compare fingerprints. Once trusted, this iPhone or iPad can connect with **Only allow trusted devices** enabled. The connection password is still required.
 
+For self-hosting, open **Settings → Server**, turn on **Use custom server**, enter the host and signaling port, then tap **Save**. The app uses the saved server after reopening. If you leave the app with valid values entered, it saves them on entering the background and applies them when you return.
+
+The server selection is written to Application Support before it takes effect. Preferences saved by older builds are migrated on launch. If saving fails, the previous selection stays active and Settings shows a retry message.
+
 The controller responds to the shared Ed25519 challenge protocol. Its signing seed is stored in a separate, non-synchronizing, device-only Keychain item, never in caches, logs or the exported pairing information. Restarting, clearing caches and changing signaling servers or login IDs preserve the same key. An unavailable, corrupt or unexpectedly missing identity fails initialization instead of silently generating a replacement. A new installation on another device needs its own pairing.
 
 ## Remote privacy screen

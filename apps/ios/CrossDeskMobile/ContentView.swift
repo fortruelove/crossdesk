@@ -998,6 +998,7 @@ private struct DevicePairingView: View {
 }
 
 private struct ServerSettingsView: View {
+    @Environment(\.scenePhase) private var scenePhase
     @EnvironmentObject private var appUpdates: AppUpdateChecker
     @ObservedObject var session: RemoteSessionModel
     @State private var serverConfigurationExpanded = false
@@ -1065,6 +1066,10 @@ private struct ServerSettingsView: View {
                                 .multilineTextAlignment(.trailing)
                                 .focused($focusedServerField, equals: .port)
                                 .accessibilityLabel(NSLocalizedString("服务器端口", comment: ""))
+                        }
+                        Button(NSLocalizedString("保存", comment: "")) {
+                            validateAndApplyServerConfiguration()
+                            focusedServerField = nil
                         }
                     }
                 } label: {
@@ -1138,6 +1143,9 @@ private struct ServerSettingsView: View {
         .onValueChange(of: focusedServerField) { field in
             if field == nil { validateAndApplyServerConfiguration() }
         }
+        .onValueChange(of: scenePhase) { phase in
+            if phase == .background { validateAndApplyServerConfiguration() }
+        }
         .onDisappear {
             // Native back navigation can remove the view before focus updates.
             focusedServerField = nil
@@ -1147,6 +1155,7 @@ private struct ServerSettingsView: View {
             ToolbarItemGroup(placement: .keyboard) {
                 Spacer()
                 Button(NSLocalizedString("完成", comment: "")) {
+                    validateAndApplyServerConfiguration()
                     focusedServerField = nil
                 }
             }
@@ -1154,11 +1163,15 @@ private struct ServerSettingsView: View {
     }
 
     private func useDefaultServer() {
+        guard session.setCustomServer(nil, applyImmediately: scenePhase == .active) else {
+            serverConfigurationError = NSLocalizedString("调整失败，请重试。", comment: "")
+            usesCustomServer = session.customServer != nil
+            return
+        }
         serverConfigurationError = nil
         focusedServerField = nil
         customServerHost = ""
         customServerPort = ""
-        session.setCustomServer(nil)
     }
 
     private func validateAndApplyServerConfiguration() {
@@ -1173,9 +1186,15 @@ private struct ServerSettingsView: View {
             serverConfigurationError = NSLocalizedString("请输入 1–65535 范围内的端口，或关闭“使用自定义服务器”。", comment: "")
             return
         }
+        guard session.setCustomServer(
+            SignalServerConfiguration(host: host, signalPort: portNumber),
+            applyImmediately: scenePhase == .active
+        ) else {
+            serverConfigurationError = NSLocalizedString("调整失败，请重试。", comment: "")
+            return
+        }
         serverConfigurationError = nil
         customServerHost = host
         customServerPort = String(portNumber)
-        session.setCustomServer(SignalServerConfiguration(host: host, signalPort: portNumber))
     }
 }
